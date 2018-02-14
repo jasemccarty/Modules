@@ -186,24 +186,24 @@ Function Set-Vsan2NodeForcedCache {
     # Set our Parameters
     [CmdletBinding()]Param(
 	[Parameter(Mandatory=$True)][string]$ClusterName,
-	[Parameter(Mandatory = $true)][ValidateSet('enable','disable')][String]$ForceCache
+	[Parameter(Mandatory = $true)][ValidateSet('enable','disable')][String]$ForcedCache
   )
     
   # Get the Cluster Name
   $Cluster = Get-Cluster -Name $ClusterName
   
   # Check to ensure we have either enable or disable, and set our values/text
-  Switch ($ForceCache) {
+  Switch ($ForcedCache) {
       "disable" { 
-          $FORCEVALUE = "0"
-          $FORCETEXT  = "Default (local) Read Caching"
+          $ForcedValue = "0"
+          $ForcedText  = "Default (local) Read Caching"
           }
       "enable" {
-          $FORCEVALUE = "1"
-          $FORCETEXT  = "Forced Warm Cache" 
+          $ForcedValue = "1"
+          $ForcedText  = "Forced Warm Cache" 
           }
       default {
-          write-host "Please include the parameter -ForceCache enable or -ForceCache disabled"
+          write-host "Please include the parameter -ForcedCache enable or -ForcedCache disabled"
           exit
           }
       }
@@ -215,23 +215,23 @@ Function Set-Vsan2NodeForcedCache {
       If($HostCount.count -eq "2" -And $Cluster.VsanEnabled){
   
           # Cycle through each ESXi Host in the cluster
-          Foreach ($ESXHost in ($Cluster |Get-VMHost |Sort Name)){
+          Foreach ($ESXHost in ($Cluster |Get-VMHost |Sort-Object Name)){
           
             # Get the current setting for diskIoTimeout
-            $FORCEDCACHE = Get-AdvancedSetting -Entity $ESXHost -Name "VSAN.DOMOwnerForceWarmCache"
+            $ForcedCache = Get-AdvancedSetting -Entity $ESXHost -Name "VSAN.DOMOwnerForceWarmCache"
                     
               # By default, if the IO Timeout doesn't align with KB2135494
             # the setting may or may not be changed based on Script parameters
-                  If($FORCEDCACHE.value -ne $FORCEVALUE){
+                  If($ForcedCache.value -ne $ForcedValue){
   
               # Show that host is being updated
-              Write-Host "2 Node $FORCETEXT Setting for $ESXHost"
-              $FORCEDCACHE | Set-AdvancedSetting -Value $FORCEVALUE -Confirm:$false
+              Write-Host "2 Node $ForcedText Setting for $ESXHost"
+              $ForcedCache | Set-AdvancedSetting -Value $ForcedValue -Confirm:$false
   
                   } else {
   
               # Show that the host is already set for the right value
-              Write-Host "$ESXHost is already configured for $FORCETEXT"
+              Write-Host "$ESXHost is already configured for $ForcedText"
   
           }
       }
@@ -285,13 +285,18 @@ Function Get-Vsan2NodeForcedCache {
 
 	If($HostCount.count -eq "2" -And $Cluster.VsanEnabled){		
 		# Cycle through each ESXi Host in the cluster
-		Foreach ($ESXHost in ($Cluster |Get-VMHost |Sort Name)){
+		Foreach ($ESXHost in ($Cluster |Get-VMHost |Sort-Object Name)){
           
 			# Get the current setting for DOMOwnerForceWarmCache
-			$FORCEDCACHE = Get-AdvancedSetting -Entity $ESXHost -Name "VSAN.DOMOwnerForceWarmCache"
+			$FORCEDCACHE = (Get-AdvancedSetting -Entity $ESXHost -Name 'VSAN.DOMOwnerForceWarmCache').Value
+
+			Switch ($FORCEDCACHE){
+				"0" { $Message = "disabled"}
+				"1" { $Message = "enabled"}
+			}
 						
 			# Show the Forced Cache setting
-			Write-Host "$ESXHost has a Forced Cache setting of $FORCETEXT"
+			Write-Host "$ESXHost has Forced Cache $message"
 		}                      
       } else {
 			# Throw and error message that this isn't a 2 Node Cluster.
