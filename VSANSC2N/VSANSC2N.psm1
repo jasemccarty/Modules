@@ -14,17 +14,35 @@ This module combines a few sample Stretched Cluster & 2 Node scripts
 
 #>
 Function Set-VsanStretchedClusterWitness {
+	<#
+    .SYNOPSIS
+       This function will set an existing vSAN Witness Appliance as a Witness for a 2 Node or Stretched vSAN Cluster
+    .DESCRIPTION
+       Use this function to set the vSAN Witness Host for a 2 Node or Stretched vSAN Cluster.
 
-    # Set our Parameters
+    .PARAMETER ClusterName
+       Specifies the name of the Cluster you want to set the vSAN Witness Host for.
+    .PARAMETER NewWitness
+       Specifies the name of the new vSAN Witness Host want to use.
+
+    .EXAMPLE
+       PS C:\> Set-VsanStretchedClusterWitness -ClusterName <Cluster Name> -NewWitness <New Witness>
+
+    .NOTES
+       Author                                    : Jase McCarty
+       Version                                   : 0.1
+       ==========Tested Against Environment==========
+       VMware vSphere Hypervisor(ESXi) Version   : 6.5
+       VMware vCenter Server Version             : 6.5
+       PowerCLI Version                          : PowerCLI 6.5.4
+       PowerShell Version                        : 3.0
+    #>
+
+	# Set our Parameters
     [CmdletBinding()]Param(
-
-    [Parameter(Mandatory=$True)]
-    [string]$ClusterName,
-  
-    [Parameter(Mandatory = $true)]
-    [String]$NewWitness
-  
-  )
+    [Parameter(Mandatory=$True)][string]$ClusterName,
+    [Parameter(Mandatory = $true)][String]$NewWitness
+    )
 
     # Check to see the cluster exists
     Try {
@@ -33,123 +51,142 @@ Function Set-VsanStretchedClusterWitness {
     }
 	    Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]
     {
-	    Write-Host "The cluster, $Clustername, was not found.               " -foregroundcolor red -backgroundcolor white
+	    Write-Host "The cluster, $ClusterName, was not found.               " -foregroundcolor red -backgroundcolor white
 	    Write-Host "Please enter a valid cluster name and rerun this script."  -foregroundcolor black -backgroundcolor white
 	    Exit
     }		
 
     # Check to make sure we are dealing with a vSAN cluster
-If($Cluster.VsanEnabled){
-	
-	# Determine whether this is a 2 Node or Stretched Cluster
-	$HostCount = $Cluster | Select-Object @{n="count";e={($_ | Get-VMHost).Count}}
-	Switch($HostCount.count){
-		"2" {$SCTYPE = "2 Node"}
-		default {$SCTYPE = "Stretched"}
-	}
+	If($Cluster.VsanEnabled){
 		
-	# Let's go grab the vSAN Cluster's Configuration
-	$VsanConfig = Get-VsanClusterConfiguration -Cluster $Cluster
-
-	# If we're dealing with a Stretched Cluster architecture, then we can proceed
-	If($VsanConfig.StretchedClusterEnabled) {
-
-		# We'll need to get the Preferred Fault Domain, and be sure to set it as Preferred when setting up the new Witness
-		$PFD = $VsanConfig.PreferredFaultDomain
-
-		# We'll need to see what the name of the current witness is.
-		$CWH = $VsanConfig.WitnessHost
-		
-		
-			# If the Old & New Witness are named the same, no need to perform a replacement
-			If ($NewWitness -ne $CWH.Name) {
-			
-				# Check to make sure the New Witness Host has already been added to vCenter
-				Try {
-				
-					# Get the Witness Host
-					$NewWitnessHost = Get-VMHost -Name $NewWitness -ErrorAction Stop
-
-					# See if it is the VMware vSAN Witness Appliance
-					$IsVsanWitnessAppliance = Get-AdvancedSetting -Entity $NewWitnessHost -Name Misc.vsanWitnessVirtualAppliance
-					
-
-					# If it is the VMware vSAN Witness Appliance, then proceed
-					If ($IsVsanWitnessAppliance.Value -eq "1"){
-						Write-Host "$NewWitness is a vSAN Witness Appliance." -foregroundcolor black -backgroundcolor green
-						
-						# Check to make sure a VMKernel port is tagged for vSAN Traffic, otherwise exit. Could possibly tag a VMkernel next time
-						If ( Get-VMHost $NewWitness | Get-VMHostNetworkAdapter | Where-Object {$_.VsanTrafficEnabled}) {
-							Write-Host "$NewWitness has a VMKernel port setup for vSAN Traffic. Proceeding."  -foregroundcolor black -backgroundcolor green
-						} else {
-							Write-Host "$NewWitness does not have a VMKernel port setup for vSAN Traffic. Exiting" -foregroundcolor red -backgroundcolor white
-							Exit 
-						}
-					} else {
-						# The Witness isn't a vSAN Witness Appliance, so exit 
-						Write-Host "$NewWitness is not a vSAN Witness Appliance, stopping" -foregroundcolor red -backgroundcolor white
-						Write-Host "This script only supports using the vSAN Witness Appliance"  -foregroundcolor red -backgroundcolor white
-						Exit
-					}
-				}
-				
-				# If the NewWitness isn't present in vCenter, suggest deploying one and rerun this script
-				Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]{
-					Write-Host "The New Witness, $NewWitness, was not found.         " -foregroundcolor red -backgroundcolor white
-					Write-Host "Please deploy a vSAN Witness Appliance and rerun this script."  -foregroundcolor black -backgroundcolor white
-					Exit
-					}					
-			
-				Write-Host "$Cluster is a $SCTYPE Cluster"
-				#Write-Host "The Preferred Fault Domain is ""$PFD"""
-				Write-Host "Current Witness:  ""$CWH"" New Witness: ""$NewWitness"""
-				
-				# If the Existing Witness is connected or in maintenance mode, go ahead and cleanly unmount the disk group
-				# We will assume that if it isn't connected, it has failed, and we just need to replace it.
-				If ($CWH.ConnectionState -eq "Connected" -or $CWH.ConnectionState -eq "Maintenance") {
-				
-					# Get the disk group of the existing vSAN Witness
-					$CWHDG = Get-VsanDiskGroup | Where-Object {$_.VMHost -like $CWH} -ErrorAction SilentlyContinue
-				
-				
-					# Remove the existing disk group, so this Witness could be used later
-					Write-Host "Removing vSAN Disk Group from $CWH so it can be easily reused later" -foregroundcolor black -backgroundcolor white
-				    Remove-VsanDiskGroup -VsanDiskGroup $CWHDG -DataMigrationMode "NoDataMigration" -Confirm:$False 
-
-				}
-				
-				# Set the cluster configuration to false - Necessary to swap Witness Appliances
-				Write-Host "Removing Witness $CWH from the vSAN cluster" -foregroundcolor black -backgroundcolor white
-				Set-VsanClusterConfiguration -Configuration $Cluster -StretchedClusterEnabled $false 
-
-				# Set the cluster configuration to Stretched/2 Node, with the new witness and the previously preferred fault domain
-				Write-Host "Adding Witness $NewWitness and reenabling the $SCTYPE Cluster" -foregroundcolor black -backgroundcolor white
-				Set-VsanClusterConfiguration -Configuration $Cluster -StretchedClusterEnabled $True -PreferredFaultDomain $PFD -WitnessHost $NewWitness -WitnessHostCacheDisk mpx.vmhba1:C0:T2:L0 -WitnessHostCapacityDisk mpx.vmhba1:C0:T1:L0
-
-			} else {
-				# Don't let an admin remove the existing witness and re-add it
-				Write-Host "$NewWitness is already the Witness for the $ClusterName Cluster"   -foregroundcolor black -backgroundcolor white
-			}
-			
-		} else {
-
-			# Show that the host is already set for the right value
-			Write-Host "$Cluster.Name is not a Stretched Cluster " -foregroundcolor black -backgroundcolor green
-			
+		# Determine whether this is a 2 Node or Stretched Cluster
+		$HostCount = $Cluster | Select-Object @{n="count";e={($_ | Get-VMHost).Count}}
+		Switch($HostCount.count){
+			"2" {$SCTYPE = "2 Node"}
+			default {$SCTYPE = "Stretched"}
 		}
+			
+		# Let's go grab the vSAN Cluster's Configuration
+		$VsanConfig = Get-VsanClusterConfiguration -Cluster $Cluster
+
+		# If we're dealing with a Stretched Cluster architecture, then we can proceed
+		If($VsanConfig.StretchedClusterEnabled) {
+
+			# We'll need to get the Preferred Fault Domain, and be sure to set it as Preferred when setting up the new Witness
+			$PFD = $VsanConfig.PreferredFaultDomain
+
+			# We'll need to see what the name of the current witness is.
+			$CWH = $VsanConfig.WitnessHost
+			
+			
+				# If the Old & New Witness are named the same, no need to perform a replacement
+				If ($NewWitness -ne $CWH.Name) {
+				
+					# Check to make sure the New Witness Host has already been added to vCenter
+					Try {
+					
+						# Get the Witness Host
+						$NewWitnessHost = Get-VMHost -Name $NewWitness -ErrorAction Stop
+
+						# See if it is the VMware vSAN Witness Appliance
+						$IsVsanWitnessAppliance = Get-AdvancedSetting -Entity $NewWitnessHost -Name Misc.vsanWitnessVirtualAppliance
+						
+
+						# If it is the VMware vSAN Witness Appliance, then proceed
+						If ($IsVsanWitnessAppliance.Value -eq "1"){
+							Write-Host "$NewWitness is a vSAN Witness Appliance." -foregroundcolor black -backgroundcolor green
+							
+							# Check to make sure a VMKernel port is tagged for vSAN Traffic, otherwise exit. Could possibly tag a VMkernel next time
+							If ( Get-VMHost $NewWitness | Get-VMHostNetworkAdapter | Where-Object {$_.VsanTrafficEnabled}) {
+								Write-Host "$NewWitness has a VMKernel port setup for vSAN Traffic. Proceeding."  -foregroundcolor black -backgroundcolor green
+							} else {
+								Write-Host "$NewWitness does not have a VMKernel port setup for vSAN Traffic. Exiting" -foregroundcolor red -backgroundcolor white
+								Exit 
+							}
+						} else {
+							# The Witness isn't a vSAN Witness Appliance, so exit 
+							Write-Host "$NewWitness is not a vSAN Witness Appliance, stopping" -foregroundcolor red -backgroundcolor white
+							Write-Host "This script only supports using the vSAN Witness Appliance"  -foregroundcolor red -backgroundcolor white
+							Exit
+						}
+					}
+					
+					# If the NewWitness isn't present in vCenter, suggest deploying one and rerun this script
+					Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]{
+						Write-Host "The New Witness, $NewWitness, was not found.         " -foregroundcolor red -backgroundcolor white
+						Write-Host "Please deploy a vSAN Witness Appliance and rerun this script."  -foregroundcolor black -backgroundcolor white
+						Exit
+						}					
+				
+					Write-Host "$Cluster is a $SCTYPE Cluster"
+					#Write-Host "The Preferred Fault Domain is ""$PFD"""
+					Write-Host "Current Witness:  ""$CWH"" New Witness: ""$NewWitness"""
+					
+					# If the Existing Witness is connected or in maintenance mode, go ahead and cleanly unmount the disk group
+					# We will assume that if it isn't connected, it has failed, and we just need to replace it.
+					If ($CWH.ConnectionState -eq "Connected" -or $CWH.ConnectionState -eq "Maintenance") {
+					
+						# Get the disk group of the existing vSAN Witness
+						$CWHDG = Get-VsanDiskGroup | Where-Object {$_.VMHost -like $CWH} -ErrorAction SilentlyContinue
+					
+					
+						# Remove the existing disk group, so this Witness could be used later
+						Write-Host "Removing vSAN Disk Group from $CWH so it can be easily reused later" -foregroundcolor black -backgroundcolor white
+						Remove-VsanDiskGroup -VsanDiskGroup $CWHDG -DataMigrationMode "NoDataMigration" -Confirm:$False 
+
+					}
+					
+					# Set the cluster configuration to false - Necessary to swap Witness Appliances
+					Write-Host "Removing Witness $CWH from the vSAN cluster" -foregroundcolor black -backgroundcolor white
+					Set-VsanClusterConfiguration -Configuration $Cluster -StretchedClusterEnabled $false 
+
+					# Set the cluster configuration to Stretched/2 Node, with the new witness and the previously preferred fault domain
+					Write-Host "Adding Witness $NewWitness and reenabling the $SCTYPE Cluster" -foregroundcolor black -backgroundcolor white
+					Set-VsanClusterConfiguration -Configuration $Cluster -StretchedClusterEnabled $True -PreferredFaultDomain $PFD -WitnessHost $NewWitness -WitnessHostCacheDisk mpx.vmhba1:C0:T2:L0 -WitnessHostCapacityDisk mpx.vmhba1:C0:T1:L0
+
+				} else {
+					# Don't let an admin remove the existing witness and re-add it
+					Write-Host "$NewWitness is already the Witness for the $ClusterName Cluster"   -foregroundcolor black -backgroundcolor white
+				}
+				
+			} else {
+
+				# Show that the host is already set for the right value
+				Write-Host "$Cluster.Name is not a Stretched Cluster " -foregroundcolor black -backgroundcolor green
+				
+			}
 		            
     }
 }
 Function Set-Vsan2NodeForcedCache {
+	<#
+    .SYNOPSIS
+       This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
+    .DESCRIPTION
+       This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
+
+    .PARAMETER ClusterName
+       Specifies the name of the Cluster you want to set change the Forced Cache state for.
+    .PARAMETER ForcedCache
+       Specifies whether to enable or disable Forced Cache
+
+    .EXAMPLE
+       PS C:\> Set-Vsan2NodeForcedCache -ClusterName <Cluster Name> -ForcedCache <enable/disable>
+
+    .NOTES
+       Author                                    : Jase McCarty
+       Version                                   : 0.1
+       ==========Tested Against Environment==========
+       VMware vSphere Hypervisor(ESXi) Version   : 6.5
+       VMware vCenter Server Version             : 6.5
+       PowerCLI Version                          : PowerCLI 6.5.4
+       PowerShell Version                        : 3.0
+    #>
 
     # Set our Parameters
     [CmdletBinding()]Param(
-    [Parameter(Mandatory=$True)]
-    [string]$ClusterName,
-  
-    [Parameter(Mandatory = $true)]
-    [ValidateSet('enable','disable')]
-    [String]$ForceCache
+	[Parameter(Mandatory=$True)][string]$ClusterName,
+	[Parameter(Mandatory = $true)][ValidateSet('enable','disable')][String]$ForceCache
   )
     
   # Get the Cluster Name
@@ -209,7 +246,84 @@ Function Set-Vsan2NodeForcedCache {
 
 }
 
+Function Get-Vsan2NodeForcedCache {
+	<#
+    .SYNOPSIS
+       This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
+    .DESCRIPTION
+       This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
+
+    .PARAMETER ClusterName
+       Specifies the name of the Cluster you want to set change the Forced Cache state for.
+
+    .EXAMPLE
+       PS C:\> Get-Vsan2NodeForcedCache -ClusterName <Cluster Name>
+
+    .NOTES
+       Author                                    : Jase McCarty
+       Version                                   : 0.1
+       ==========Tested Against Environment==========
+       VMware vSphere Hypervisor(ESXi) Version   : 6.5
+       VMware vCenter Server Version             : 6.5
+       PowerCLI Version                          : PowerCLI 6.5.4
+       PowerShell Version                        : 3.0
+    #>
+
+    # Set our Parameters
+    [CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$ClusterName
+  )
+    
+	# Get the Cluster Name
+	$Cluster = Get-Cluster -Name $ClusterName
+  
+	# Display the Cluster
+    Write-Host Cluster: $($Cluster.name)
+      
+	# Check to make sure we only have 2 Nodes in the cluster and vSAN is enabled
+	$HostCount = $Cluster | Select-Object @{n="count";e={($_ | Get-VMHost).Count}}
+
+	If($HostCount.count -eq "2" -And $Cluster.VsanEnabled){		
+		# Cycle through each ESXi Host in the cluster
+		Foreach ($ESXHost in ($Cluster |Get-VMHost |Sort Name)){
+          
+			# Get the current setting for DOMOwnerForceWarmCache
+			$FORCEDCACHE = Get-AdvancedSetting -Entity $ESXHost -Name "VSAN.DOMOwnerForceWarmCache"
+						
+			# Show the Forced Cache setting
+			Write-Host "$ESXHost has a Forced Cache setting of $FORCETEXT"
+		}                      
+      } else {
+			# Throw and error message that this isn't a 2 Node Cluster.
+			Write-Host "The cluster ($ClusterName) is not a 2 Node cluster and/or does not have vSAN enabled."
+      }
+  
+  
+
+}
+
 Function Set-VsanStretchedClusterDrsRules {
+	<#
+    .SYNOPSIS
+       This function will set vSphere DRS rules for a Stretched vSAN Cluster where VMs are using Tags
+    .DESCRIPTION
+       Use this function to set vSphere DRS rules for a Stretched vSAN Cluster.
+
+    .PARAMETER ClusterName
+       Specifies the name of the Cluster you want to set the vSAN Witness Host for.
+
+    .EXAMPLE
+       PS C:\> Set-VsanStretchedClusterDrsRules -ClusterName <Cluster Name>
+
+    .NOTES
+       Author                                    : Jase McCarty
+       Version                                   : 0.1
+       ==========Tested Against Environment==========
+       VMware vSphere Hypervisor(ESXi) Version   : 6.5
+       VMware vCenter Server Version             : 6.5
+       PowerCLI Version                          : PowerCLI 6.5.4
+       PowerShell Version                        : 3.0
+    #>
 	
 	$Cluster = Get-Cluster -Name $ClusterName
 
@@ -290,9 +404,7 @@ Function Set-VsanStretchedClusterDrsRules {
 												$Remove = Get-DrsClusterGroup $PreferredVMGroup  | Set-DrsClusterGroup -VM $ClusterVM -Remove
 												Write-Host "Assigning $ClusterVM to the proper group"
 												$Add = Get-DrsClusterGroup $SecondaryVMGroup  | Set-DrsClusterGroup -VM $ClusterVM -Add										} 
-					}
-			
-			
+					}			
 			}
 		
 		}
