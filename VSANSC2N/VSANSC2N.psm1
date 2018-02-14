@@ -13,6 +13,41 @@ This module combines a few sample Stretched Cluster & 2 Node scripts
 .Notes
 
 #>
+Function runGuestOpInESXiVM() {
+	param(
+		$vm_moref,
+		$guest_username, 
+		$guest_password,
+		$guest_command_path,
+		$guest_command_args
+	)
+	
+	# Get Session information
+	$session = $global:DefaultVIServer
+
+	# Guest Ops Managers
+	$guestOpMgr = Get-View $session.ExtensionData.Content.GuestOperationsManager
+	$authMgr = Get-View $guestOpMgr.AuthManager
+	$procMgr = Get-View $guestOpMgr.processManager
+	
+	# Create Auth Session Object
+	$auth = New-Object VMware.Vim.NamePasswordAuthentication
+	$auth.username = $guest_username
+	$auth.password = $guest_password
+	$auth.InteractiveSession = $false
+	
+	# Program Spec
+	$progSpec = New-Object VMware.Vim.GuestProgramSpec
+	# Full path to the command to run inside the guest
+	$progSpec.programPath = "$guest_command_path"
+	$progSpec.workingDirectory = "/tmp"
+	# Arguments to the command path, must include "++goup=host/vim/tmp" as part of the arguments
+	$progSpec.arguments = "++group=host/vim/tmp $guest_command_args"
+	
+	# Issue guest op command
+	$cmd_pid = $procMgr.StartProgramInGuest($vm_moref,$auth,$progSpec)
+}
+
 Function Set-VsanStretchedClusterWitness {
 	<#
     .SYNOPSIS
@@ -245,7 +280,6 @@ Function Set-Vsan2NodeForcedCache {
   
 
 }
-
 Function Get-Vsan2NodeForcedCache {
 	<#
     .SYNOPSIS
@@ -306,7 +340,6 @@ Function Get-Vsan2NodeForcedCache {
   
 
 }
-
 Function Set-VsanStretchedClusterDrsRules {
 	<#
     .SYNOPSIS
@@ -418,3 +451,234 @@ Function Set-VsanStretchedClusterDrsRules {
 	}
 
 }
+
+Function New-VsanStretchedClusterWitness {
+		<#
+		.SYNOPSIS
+		This function will set an existing vSAN Witness Appliance as a Witness for a 2 Node or Stretched vSAN Cluster
+		.DESCRIPTION
+		Use this function to set the vSAN Witness Host for a 2 Node or Stretched vSAN Cluster.
+
+		.PARAMETER ClusterName
+		Specifies the name of the Cluster you want to set the vSAN Witness Host for.
+		.PARAMETER NewWitness
+		Specifies the name of the new vSAN Witness Host want to use.
+
+		.EXAMPLE
+		PS C:\> Set-VsanStretchedClusterWitness -ClusterName <Cluster Name> -NewWitness <New Witness>
+
+		.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+		#>
+
+		# Set our Parameters
+		[CmdletBinding()]Param(
+		[Parameter(Mandatory=$True)][string]$Server,
+		[Parameter(Mandatory=$true)][String]$Cluster,
+		[Parameter(Mandatory=$true)][String]$Datastore,
+		[Parameter(Mandatory=$true)][String]$WitnessOVAPath,
+		[Parameter(Mandatory=$true)][String]$WitnessName,
+		[Parameter(Mandatory=$true)][String]$WitnessPass,
+		[Parameter(Mandatory=$true)][String]$WitnessSize,
+		[Parameter(Mandatory=$true)][String]$WitnessPG1,
+		[Parameter(Mandatory=$true)][String]$WitnessPG2
+		)
+
+		# Grab a random host in the cluster to deploy to
+		$TargetHost = Get-Cluster $Cluster | Get-VMHost | Where-Object {$_.PowerState -eq "PoweredOn" -and $_.ConnectionState -eq "Connected"} |Get-Random
+
+		# Grab a random datastore
+		$TargetDatastore = Get-Datastore -Name $Datastore
+
+		# Grab the OVA properties from the vSAN Witness Appliance OVA
+		$ovfConfig = Get-OvfConfiguration -Ovf $WitnessOVAPath
+
+		# Set the Network Port Groups to use, the deployment size, and the root password for the vSAN Witness Appliance
+		$ovfconfig.NetworkMapping.Management_Network.Value = $WitnessPG1
+		$ovfconfig.NetworkMapping.Witness_Network.Value = $WitnessPG2
+		$ovfconfig.DeploymentOption.Value = $WitnessSize
+		$ovfconfig.vsan.witness.root.passwd.value = $WitnessPass
+
+		# Import the vSAN Witness Appliance 
+		Import-VApp -Source $WitnessOVAPath -OvfConfiguration $ovfConfig -Name $WitnessName -VMHost $TargetHost -Datastore $TargetDatastore -DiskStorageFormat Thin
+
+}
+
+Function Set-VsanWitnessNetwork {
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$Name,
+	[Parameter(Mandatory=$true)][String]$Pass,
+	[Parameter(Mandatory=$true)][String]$VMkernel,
+	[Parameter(Mandatory=$false)][String]$VMkernelIp,
+	[Parameter(Mandatory=$false)][String]$NetMask,
+	[Parameter(Mandatory=$false)][String]$Gateway,
+	[Parameter(Mandatory=$false)][String]$DNS1,
+	[Parameter(Mandatory=$false)][String]$DNS2,
+	[Parameter(Mandatory=$false)][String]$FQDN
+	)
+
+	# Set the $WitnessVM variable, and guestos credentials
+	$WitnessVM = Get-VM $Name
+	$esxi_username = "root"
+	$esxi_password = $Pass
+
+	# Power on the vSAN Witness Appliance if it is not already
+	If ((Get-VM $WitnessVM).PowerState -eq "PoweredOff") { Start-VM $WitnessVM} 
+
+	# Wait until the tools are running because we'll need them to set the IP
+	write-host "Waiting for VM Tools to Start"
+	do {
+		$toolsStatus = (Get-VM $WitnessVM | Get-View).Guest.ToolsStatus
+		write-host $toolsStatus
+		sleep 5
+	} until ( $toolsStatus -eq 'toolsOk' )
+
+	
+	# Setup our commands to set IP/Gateway information
+	$Command_Path = '/bin/python'
+	
+	Switch ($VMkernel) {
+		"vmk0" { 
+			# CMD to set VMkernel Network Settings
+			$CommandVMkernel = '/bin/esxcli.py network ip interface ipv4 set -i ' + $VMKernel + ' -I ' + $VMkernelIP + ' -N ' + $NetMask  + ' -t static;/bin/esxcli.py network ip route ipv4 add -N defaultTcpipStack -n default -g ' + $Gateway
+			# CMD to set DNS & Hostname Settings
+			$CommandDns = '/bin/esxcli.py network ip dns server add --server=' + $DNS2 + ';/bin/esxcli.py network ip dns server add --server=' + $DNS1 + ';/bin/esxcli.py system hostname set --fqdn=' + $FQDN
+
+			# Setup the Management Network
+			Write-Host "Setting the Management Network"
+			Write-Host
+			runGuestOpInESXiVM -vm_moref $WitnessVM.ExtensionData.MoRef -guest_username $esxi_username -guest_password $esxi_password -guest_command_path $command_path -guest_command_args $CommandVMkernel
+			runGuestOpInESXiVM -vm_moref $WitnessVM.ExtensionData.MoRef -guest_username $esxi_username -guest_password $esxi_password -guest_command_path $command_path -guest_command_args $CommandDns
+
+			}
+		"vmk1" {
+			# CMD to set VMkernel Network Settings
+			$CommandVMkernel = '/bin/esxcli.py network ip interface ipv4 set -i ' + $VMKernel + ' -I ' + $VMkernelIP + ' -N ' + $NetMask  + ' -t static;/bin/esxcli.py network ip route ipv4 add -N defaultTcpipStack -n default -g ' + $Gateway
+			# Setup the Witness Portgroup
+			Write-Host "Setting the WitnessPg Network"
+			runGuestOpInESXiVM -vm_moref $WitnessVM.ExtensionData.MoRef -guest_username $esxi_username -guest_password $esxi_password -guest_command_path $command_path -guest_command_args $CommandVMkernel
+			}
+		default {
+			write-host "Please select either vmk0 or vmk1"
+			exit
+			}
+		}
+}
+
+Function Set-VsanWitnessNetworkRoute {
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$Name,
+	[Parameter(Mandatory=$True)][String]$Destination,
+	[Parameter(Mandatory=$True)][String]$Gateway,
+	[Parameter(Mandatory=$True)][String]$Prefix
+	)
+
+	# Grab the host, so we can set Static Routes and NTP
+	$WitnessHost = Get-VMhost -Name $Name
+
+	# Set Static Routes
+	Write-Host "Setting Static Route for the Witness Host $Name"
+	New-VMHostRoute $WitnessHost -Destination $Destination -Gateway $Gateway -PrefixLength $Prefix -Confirm:$False
+
+}
+
+Function Get-VsanWitnessNetworkRoute {
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$Name
+	)
+
+	# Grab the host, so we can set Static Routes and NTP
+	$WitnessHost = Get-VMhost -Name $Name
+
+	# Set Static Routes
+	Write-Host "Getting Static Routes for the Witness Host $Name"
+	Get-VMHostRoute -VMHost $WitnessHost 
+}
+
+Function Remove-VsanWitnessNetworkRoute {
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$Name,
+	[Parameter(Mandatory=$True)][String]$Destination
+	)
+
+	# Grab the host, so we can set Static Routes and NTP
+	$WitnessHost = Get-VMhost -Name $Name
+
+	# Set Static Routes
+	Write-Host "Removing Static Route for the Witness Host $Name"
+	$Routes = Get-VMHostRoute $WitnessHost | Where-Object {$_.Destination -contains $Destination}
+	Remove-VMHostRoute -VMHostRoute $Routes -Confirm:$false
+}
+
+Function Set-VsanWitnessNtp {
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$Name,
+	[Parameter(Mandatory=$false)][String]$Ntp1,
+	[Parameter(Mandatory=$false)][String]$Ntp2
+	)
+
+	# Grab the host, so we can set Static Routes and NTP
+	$WitnessHost = Get-VMhost -Name $Name
+
+	Write-Host "Configuring NTP" 
+	#Configure NTP server & allow NTP queries outbound through the firewall
+	Add-VmHostNtpServer -VMHost $WitnessHost -NtpServer $Ntp1
+	Add-VmHostNtpServer -VMHost $WitnessHost -NtpServer $Ntp2
+
+	# Get the state of the NTP client
+	Get-VMHostFirewallException -VMHost $WitnessHost | Where-Object {$_.Name -eq "NTP client"} | Set-VMHostFirewallException -Enabled:$true
+
+	Write-Host "Starting NTP Client"
+	#Start NTP client service and set to automatic
+	Get-VmHostService -VMHost $WitnessHost | Where-Object {$_.key -eq "ntpd"} | Start-VMHostService
+	Get-VmHostService -VMHost $WitnessHost | Where-Object {$_.key -eq "ntpd"} | Set-VMHostService -policy "automatic"
+	
+}
+
+Function Add-VsanWitnessHost {
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$true)][String]$Fqdn,
+	[Parameter(Mandatory=$true)][String]$Ip,
+	[Parameter(Mandatory=$true)][String]$Pass,
+	[Parameter(Mandatory=$true)][String]$Datacenter
+
+	)	# Power on the vSAN Witness Appliance
+
+	# Grab the Datacenter that Witnesses will reside in
+	$WitnessDC = Get-Datacenter -Name $Datacenter
+
+	# Grab the DNS entry for the guest
+	$DnsName = Resolve-DnsName -Name $Ip | Select-Object NameHost
+
+	# If the DNS names match, add by DNS, if they don't add by IP
+	if ($DnsName.NameHost -eq $Fqdn){
+			Write-Host "Witness IP & Hostname Match"
+			$NewWitnessName = $Fqdn 
+		} else {
+			Write-Host "Witness IP & Hostname Don't Match"
+			$NewWitnessName = $Ip
+	}
+
+	# Add the new Witness host to vCenter 
+	Add-VMHost $NewWitnessName -Location $WitnessDC -user root -password $Pass -Force
+
+}
+
