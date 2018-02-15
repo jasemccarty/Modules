@@ -276,17 +276,14 @@ Function Set-Vsan2NodeForcedCache {
           # Throw and error message that this isn't a 2 Node Cluster.
       Write-Host "The cluster ($ClusterName) is not a 2 Node cluster and/or does not have vSAN enabled."
       }
-  
-  
-
 }
 Function Get-Vsan2NodeForcedCache {
 	<#
     .SYNOPSIS
-       This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
+       This function will get the current state of Forced Caching across hosts on a 2 Node vSAN Cluster
     .DESCRIPTION
-       This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
-
+	   This function will get the current state of Forced Caching across hosts on a 2 Node vSAN Cluster
+	   
     .PARAMETER ClusterName
        Specifies the name of the Cluster you want to set change the Forced Cache state for.
 
@@ -455,17 +452,29 @@ Function Set-VsanStretchedClusterDrsRules {
 Function New-VsanStretchedClusterWitness {
 		<#
 		.SYNOPSIS
-		This function will set an existing vSAN Witness Appliance as a Witness for a 2 Node or Stretched vSAN Cluster
+		This function will deploy a Witness for a 2 Node or Stretched vSAN Cluster
 		.DESCRIPTION
-		Use this function to set the vSAN Witness Host for a 2 Node or Stretched vSAN Cluster.
+		This function will deploy a Witness for a 2 Node or Stretched vSAN Cluster
 
-		.PARAMETER ClusterName
+		.PARAMETER Cluster
 		Specifies the name of the Cluster you want to set the vSAN Witness Host for.
-		.PARAMETER NewWitness
-		Specifies the name of the new vSAN Witness Host want to use.
+		.PARAMETER Datastore
+		Specifies the name of the datastore to use.
+		.PARAMETER OVAPath
+		Full path and OVA filename for the vSAN Witness Appliance
+		.PARAMETER Name
+		The Virtual Machine Name of the vSAN Witness Appliance
+		.PARAMETER Pass
+		The root password of the vSAN Witness Appliance
+		.PARAMETER Size
+		The deployment size of the vSAN Witness Appliance
+		.PARAMETER PG1
+		The port group name for the vSAN Witness Appliance management network 
+		.PARAMETER PG2
+		The port group name for the vSAN Witness Appliance WitnessPg network
 
 		.EXAMPLE
-		PS C:\> Set-VsanStretchedClusterWitness -ClusterName <Cluster Name> -NewWitness <New Witness>
+		PS C:\> New-VsanStretchedClusterWitness -Cluster <Cluster Name> -Datastrre <Datastore name> -OVAPath <c:\path\witness-xxx.ova> -Name <Witness VM Name> -Pass <password for witness> -Size <tiny/normal/large> -PG1 <port group name for Management network> -PG2 <port group name for Witness Network>
 
 		.NOTES
 		Author                                    : Jase McCarty
@@ -479,15 +488,14 @@ Function New-VsanStretchedClusterWitness {
 
 		# Set our Parameters
 		[CmdletBinding()]Param(
-		[Parameter(Mandatory=$True)][string]$Server,
 		[Parameter(Mandatory=$true)][String]$Cluster,
 		[Parameter(Mandatory=$true)][String]$Datastore,
-		[Parameter(Mandatory=$true)][String]$WitnessOVAPath,
-		[Parameter(Mandatory=$true)][String]$WitnessName,
-		[Parameter(Mandatory=$true)][String]$WitnessPass,
-		[Parameter(Mandatory=$true)][String]$WitnessSize,
-		[Parameter(Mandatory=$true)][String]$WitnessPG1,
-		[Parameter(Mandatory=$true)][String]$WitnessPG2
+		[Parameter(Mandatory=$true)][String]$OVAPath,
+		[Parameter(Mandatory=$true)][String]$Name,
+		[Parameter(Mandatory=$true)][String]$Pass,
+		[Parameter(Mandatory=$true)][String]$Size,
+		[Parameter(Mandatory=$true)][String]$PG1,
+		[Parameter(Mandatory=$true)][String]$PG2
 		)
 
 		# Grab a random host in the cluster to deploy to
@@ -497,28 +505,69 @@ Function New-VsanStretchedClusterWitness {
 		$TargetDatastore = Get-Datastore -Name $Datastore
 
 		# Grab the OVA properties from the vSAN Witness Appliance OVA
-		$ovfConfig = Get-OvfConfiguration -Ovf $WitnessOVAPath
+		$ovfConfig = Get-OvfConfiguration -Ovf $OVAPath
 
 		# Set the Network Port Groups to use, the deployment size, and the root password for the vSAN Witness Appliance
-		$ovfconfig.NetworkMapping.Management_Network.Value = $WitnessPG1
-		$ovfconfig.NetworkMapping.Witness_Network.Value = $WitnessPG2
-		$ovfconfig.DeploymentOption.Value = $WitnessSize
-		$ovfconfig.vsan.witness.root.passwd.value = $WitnessPass
+		$ovfconfig.NetworkMapping.Management_Network.Value = $PG1
+		$ovfconfig.NetworkMapping.Witness_Network.Value = $PG2
+		$ovfconfig.DeploymentOption.Value = $Size
+		$ovfconfig.vsan.witness.root.passwd.value = $Pass
 
 		# Import the vSAN Witness Appliance 
-		Import-VApp -Source $WitnessOVAPath -OvfConfiguration $ovfConfig -Name $WitnessName -VMHost $TargetHost -Datastore $TargetDatastore -DiskStorageFormat Thin
+		Import-VApp -Source $OVAPath -OvfConfiguration $ovfConfig -Name $Name -VMHost $TargetHost -Datastore $TargetDatastore -DiskStorageFormat Thin
 
 }
 
 Function Set-VsanWitnessNetwork {
 
+		<#
+		.SYNOPSIS
+		This function will set vSAN Witness Networking
+		.DESCRIPTION
+		This function will set vSAN Witness Networking
+		.PARAMETER Name
+		The Virtual Machine Name of the vSAN Witness Appliance
+		.PARAMETER Pass
+		The root password of the vSAN Witness Appliance
+		.PARAMETER VMkernel
+		VMkernel Interface to be modified - either vmk0 (Management) or vmk1 (WitnessPg)
+		.PARAMETER VMkernelIp
+		Ip Address of the VMkernel Interface
+		.PARAMETER NetMask
+		NetMask for the VMkernel Interface
+		.PARAMETER Gateway
+		Gateway for the VMkernel Interface
+		.PARAMETER DNS1
+		DNS Entry for the default TCP/IP stack - used when VMkernel is vmk0
+		.PARAMETER DNS2
+		DNS Entry for the default TCP/IP stack - used when VMkernel is vmk0
+		.PARAMETER FQDN
+		The FQDN/Host Name for the vSAN Witness Appliance
+
+		.EXAMPLE
+		# Setting up the Management Network and Default TCP/IP Stack settings
+		PS C:\> Set-VsanWitnessNetwork -Name <WitnessVM> -Pass <New Witness> -VMkernel <vmk0> -VMkernelIp <10.198.6.22> -NetMask <255.255.255.0> -Gateway <10.198.6.253> -DNS1 <10.198.6.11> -DNS2 <10.198.6.12> -FQDN <witness.demo.local>
+
+		# Setting up the Witness Network
+		PS C:\> Set-VsanWitnessNetwork -Name <WitnessVM> -Pass <New Witness> -VMkernel <vmk1> -VMkernelIp <192.168.10.22> -NetMask <255.255.255.0>
+
+		.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+		#>
+
 	# Set our Parameters
 	[CmdletBinding()]Param(
-	[Parameter(Mandatory=$True)][string]$Name,
+	[Parameter(Mandatory=$true)][string]$Name,
 	[Parameter(Mandatory=$true)][String]$Pass,
 	[Parameter(Mandatory=$true)][String]$VMkernel,
-	[Parameter(Mandatory=$false)][String]$VMkernelIp,
-	[Parameter(Mandatory=$false)][String]$NetMask,
+	[Parameter(Mandatory=$true)][String]$VMkernelIp,
+	[Parameter(Mandatory=$true)][String]$NetMask,
 	[Parameter(Mandatory=$false)][String]$Gateway,
 	[Parameter(Mandatory=$false)][String]$DNS1,
 	[Parameter(Mandatory=$false)][String]$DNS2,
@@ -575,6 +624,33 @@ Function Set-VsanWitnessNetwork {
 
 Function Set-VsanWitnessNetworkRoute {
 
+	<#
+	.SYNOPSIS
+	This function will set vSAN Witness Routing
+	.DESCRIPTION
+	This function will set vSAN Witness Routing
+	.PARAMETER Name
+	The ESXi hostname of the vSAN Witness Appliance
+	.PARAMETER Destination
+	Destination network
+	.PARAMETER Gateway
+	Gateway to use
+	.PARAMETER Prefix
+	Network Prefix
+
+	.EXAMPLE
+	PS C:\> Set-VsanWitnessNetworkRoute -Name <Witness FQDN> -Destination <192.168.110.0> -Gateway <192.168.109.253> -Prefix <24>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+
 	# Set our Parameters
 	[CmdletBinding()]Param(
 	[Parameter(Mandatory=$True)][string]$Name,
@@ -593,6 +669,27 @@ Function Set-VsanWitnessNetworkRoute {
 }
 
 Function Get-VsanWitnessNetworkRoute {
+	<#
+	.SYNOPSIS
+	This function will get vSAN Witness Routing
+	.DESCRIPTION
+	This function will get vSAN Witness Routing
+	.PARAMETER Name
+	The ESXi hostname of the vSAN Witness Appliance
+
+	.EXAMPLE
+	PS C:\> Get-VsanWitnessNetworkRoute -Name <Witness FQDN>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+
 
 	# Set our Parameters
 	[CmdletBinding()]Param(
@@ -608,6 +705,33 @@ Function Get-VsanWitnessNetworkRoute {
 }
 
 Function Remove-VsanWitnessNetworkRoute {
+	<#
+	.SYNOPSIS
+	This function will remove vSAN Witness Routing
+	.DESCRIPTION
+	This function will remove vSAN Witness Routing
+	.PARAMETER Name
+	The ESXi hostname of the vSAN Witness Appliance
+	.PARAMETER Destination
+	Destination network
+	.PARAMETER Gateway
+	Gateway to use
+	.PARAMETER Prefix
+	Network Prefix
+
+	.EXAMPLE
+	PS C:\> Remove-VsanWitnessNetworkRoute -Name <Witness FQDN> -Destination <192.168.110.0>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+
 
 	# Set our Parameters
 	[CmdletBinding()]Param(
@@ -625,6 +749,30 @@ Function Remove-VsanWitnessNetworkRoute {
 }
 
 Function Set-VsanWitnessNtp {
+	<#
+	.SYNOPSIS
+	This function will set vSAN Witness NTP settings
+	.DESCRIPTION
+	This function will set vSAN Witness NTP settings
+	.PARAMETER Name
+	The ESXi hostname of the vSAN Witness Appliance
+	.PARAMETER Ntp1
+	NTP1 Host address
+	.PARAMETER Ntp2
+	NTP2 Host address
+
+	.EXAMPLE
+	PS C:\> Set-VsanWitnessNtp -Name <Witness FQDN> -Ntp1 <192.5.40.41> -Ntp2 <192.5.41.41>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
 
 	# Set our Parameters
 	[CmdletBinding()]Param(
@@ -652,7 +800,33 @@ Function Set-VsanWitnessNtp {
 }
 
 Function Add-VsanWitnessHost {
+	<#
+	.SYNOPSIS
+	This function will add a vSAN Witness Host to the vCenter Server
+	.DESCRIPTION
+	This function will add a vSAN Witness Host to the vCenter Server
+	.PARAMETER Fqdn
+	The ESXi hostname of the vSAN Witness Appliance
+	.PARAMETER Ip
+	Management IP address of the vSAN Witness Host
+	.PARAMETER Pass
+	Password of the vSAN Witness Host
+	.PARAMETER Datacenter
+	Name of the datacenter to add the vSAN Witness Host to
 
+	.EXAMPLE
+	PS C:\> Add-VsanWitnessHost -Fqdn <Witness FQDN> -Ip <10.198.6.22> -Pass <Witness password> -Datacenter <name of datacenter to add to>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+	
 	# Set our Parameters
 	[CmdletBinding()]Param(
 	[Parameter(Mandatory=$true)][String]$Fqdn,
@@ -682,3 +856,341 @@ Function Add-VsanWitnessHost {
 
 }
 
+Function Get-VsanWitnessVMkernel {
+	<#
+	.SYNOPSIS
+	This function will change the vSAN Witness Host VMkernel Interface used for vSAN Traffic
+	.DESCRIPTION
+	This function will change the vSAN Witness Host VMkernel Interface used for vSAN Traffic
+	.PARAMETER Name
+	The ESXi hostname of the vSAN Witness Appliance
+
+	.EXAMPLE
+	PS C:\> Get-VsanWitnessVMkernel -Name <Witness Name>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+	
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$true)][String]$Name
+	)
+
+	# Grab the Datacenter that Witnesses will reside in
+	$WitnessVM = Get-VMhost -Name $Name
+
+	# Grab the VMkernel interface(s) with vSAN Traffic Enabled
+	$VsanVMkernel = $WitnessVM | Get-VMHostNetworkAdapter -VMKernel | Where-Object {$_.VsanTrafficEnabled -eq $true}
+
+	Switch ($VsanVMkernel.Count) {
+		"0" {
+			Write-Host "No VMkernel Interfaces are tagged with vSAN Traffic"
+			Write-Host "Please enable vSAN Traffic on at least one VMkernel Interface"
+		}
+		"1" {
+			Switch ($VsanVMkernel.Name) {
+				"vmk0" {
+					Write-Host "vSAN Traffic is tagged on the Management VMkernel Interface:" $VsanVMkernel.Name
+				}
+				"vmk1" {
+					Write-Host "vSAN Traffic is tagged on the Witness VMkernel Interface:" $VsanVMkernel.Name				
+				}
+				default {
+					Write-Host "vSAN Traffic is tagged on an alternate VMkernel Interface:" $VsanVMkernel.Name
+				}
+			}
+		}
+		default {
+			Write-Host "There are more than 1 VMkernel Interfaces which have vSAN Traffic enabled"
+		}
+
+	}
+
+}Function Get-VsanWitnessVMkernel {
+	<#
+	.SYNOPSIS
+	This function will change the vSAN Witness Host VMkernel Interface used for vSAN Traffic
+	.DESCRIPTION
+	This function will change the vSAN Witness Host VMkernel Interface used for vSAN Traffic
+	.PARAMETER Name
+	The ESXi hostname of the vSAN Witness Appliance
+
+	.EXAMPLE
+	PS C:\> Get-VsanWitnessVMkernel -Name <Witness Name>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+	
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$true)][String]$Name
+	)
+
+	# Grab the Datacenter that Witnesses will reside in
+	$WitnessVM = Get-VMhost -Name $Name
+
+	# Grab the VMkernel interface(s) with vSAN Traffic Enabled
+	$VsanVMkernel = $WitnessVM | Get-VMHostNetworkAdapter -VMKernel | Where-Object {$_.VsanTrafficEnabled -eq $true}
+
+	Switch ($VsanVMkernel.Count) {
+		"0" {
+			Write-Host "No VMkernel Interfaces are tagged with vSAN Traffic"
+			Write-Host "Please enable vSAN Traffic on at least one VMkernel Interface"
+		}
+		"1" {
+			Switch ($VsanVMkernel.Name) {
+				"vmk0" {
+					Write-Host "vSAN Traffic is tagged on the Management VMkernel Interface:" $VsanVMkernel.Name
+				}
+				"vmk1" {
+					Write-Host "vSAN Traffic is tagged on the Witness VMkernel Interface:" $VsanVMkernel.Name				
+				}
+				default {
+					Write-Host "vSAN Traffic is tagged on an alternate VMkernel Interface:" $VsanVMkernel.Name
+				}
+			}
+		}
+		default {
+			Write-Host "There are more than 1 VMkernel Interfaces which have vSAN Traffic enabled"
+		}
+
+	}
+
+}
+
+Function Set-VsanWitnessVMkernel {
+	<#
+	.SYNOPSIS
+	This function will change the vSAN Witness Host VMkernel Interface used for vSAN Traffic
+	.DESCRIPTION
+	This function will change the vSAN Witness Host VMkernel Interface used for vSAN Traffic
+	.PARAMETER Name
+	The ESXi hostname of the vSAN Witness Appliance
+	.PARAMETER VMkernel
+	The VMkernel to be used for vSAN Traffic
+
+	.EXAMPLE
+	PS C:\> Set-VsanWitnessVMkernel -Name <Witness Name> -VMkernel <vmk1>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+	
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$true)][String]$Name,
+	[Parameter(Mandatory=$true)][String]$VsanVMkernel
+	)
+
+	# Grab the Datacenter that Witnesses will reside in
+	$WitnessVM = Get-VMhost -Name $Name
+
+	# Attach to the VMkernel
+	$VMkernel = $WitnessVM | Get-VMHostNetworkAdapter -VMKernel -Name $VsanVMkernel
+
+	# Grab the VMkernel interface(s) with vSAN Traffic Enabled
+	$VMkernelList = $WitnessVM | Get-VMHostNetworkAdapter -VMKernel 
+
+	Foreach ($VMkernelInterface in $VMkernelList) {
+
+		If ($VMkernelInterface.Name -eq $VMkernel.Name) {
+
+			If ($VMkernelInterface.VsanTrafficEnabled -ne $true) { 
+				Write-Host "Enabling vSAN Traffic on $VMkernelInterface"
+				$VMkernelInterface | Set-VMHostNetworkAdapter -VsanTrafficEnabled $true -Confirm:$false
+			} else { 
+				Write-Host "vSAN Traffic already enabled on $VMKernelInterface"
+			}
+		} else {
+
+			If ($VMkernelInterface.VsanTrafficEnabled -eq $true) { 
+				Write-Host "vSAN Traffic is enabled on $VMkernelInterface - Disabling"
+				$VMkernelInterface | Set-VMHostNetworkAdapter -VsanTrafficEnabled $false -Confirm:$false
+			}
+		}
+	}
+
+}
+
+Function Get-VsanHostVMkernelTrafficType {
+	<#
+	.SYNOPSIS
+	This function will list any vSAN Host VMkernel Ports tagged for Witness Traffic
+	.DESCRIPTION
+	This function will list any vSAN Host VMkernel Ports tagged for Witness Traffic
+	.PARAMETER Cluster
+	The vSAN Cluster to check
+	.PARAMETER Type
+
+	.EXAMPLE
+	PS C:\> Get-VsanHostVMkernelTrafficType -Cluster <Witness Name>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+	
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$true)][String]$Cluster,
+	[Parameter(Mandatory=$false)][String]$Type
+	)
+    
+	# Get the Cluster Name
+	$VsanCluster = Get-Cluster -Name $Cluster
+	
+	# Check to make sure vSAN is enabled
+	If($VsanCluster.VsanEnabled){
+
+		# Cycle through each ESXi Host in the cluster
+		Foreach ($ESXHost in ($VsanCluster |Get-VMHost |Sort-Object Name)){
+		
+			# Create an EsxCli variable for the host
+			$VMHostEsxCli = Get-EsxCli -VMHost $ESXHost
+					
+			# Get any VMKernel Interface that is Tagged for vSAN or Witness Traffic
+			$VsanNics = $VMHostEsxCli.vsan.network.list.Invoke()
+
+			Foreach ($HostNic in $VsanNics) {
+				If ($Type) {
+					If ($HostNic.TrafficType -eq $Type) {
+						Write-Host "Host:"$ESXHost.Name"-VMkernel:"$HostNic.VmkNicName"-Traffic Type:"$HostNic.TrafficType	
+					} 
+				} else {
+					Write-Host "Host:"$ESXHost.Name"-VMkernel:"$HostNic.VmkNicName"-Traffic Type:"$HostNic.TrafficType
+				}
+			}
+		}
+					
+	} else {
+		
+		# Throw and error message that this isn't a vSAN Enabled Cluster.
+	Write-Host "The cluster ($Cluster) does not have vSAN enabled."
+	}
+
+
+	
+}
+Function Set-VsanHostWitnessTraffic {
+	<#
+	.SYNOPSIS
+	This function will list any vSAN Host VMkernel Ports tagged for Witness Traffic
+	.DESCRIPTION
+	This function will list any vSAN Host VMkernel Ports tagged for Witness Traffic
+	.PARAMETER Cluster
+	The vSAN Cluster to check
+	.PARAMETER Vmk
+	The VMkernel Interface to set the traffic type for
+	.PARAMETER Option
+	Set or Unset
+
+	.EXAMPLE
+	PS C:\> Set-VsanHostWitnessTraffic -Cluster <Witness Name> -Vmk <VMkernel> -Option <enable/disable>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+	
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$true)][String]$Cluster,
+	[Parameter(Mandatory=$true)][String]$Vmk,
+	[Parameter(Mandatory=$false)][String]$Option	
+	)
+    
+	# Get the Cluster Name
+	$VsanCluster = Get-Cluster -Name $Cluster
+	
+	# Check to make sure vSAN is enabled
+	If($VsanCluster.VsanEnabled){
+
+		# Cycle through each ESXi Host in the cluster
+		Foreach ($ESXHost in ($VsanCluster |Get-VMHost |Sort-Object Name)){
+		
+			# Create an EsxCli variable for the host
+			$VMHostEsxCli = Get-EsxCli -VMHost $ESXHost -V2
+
+			Switch ($Option) {
+				"remove" {
+					# Remove the witness traffic type from the selected VMkernel
+					$WitnessArgs = $VMHostEsxCli.vsan.network.ip.add.CreateArgs()
+					$WitnessArgs.interfacename = $Vmk
+					Write-Host "Removing vSAN Witness Traffic from" $Vmk "on host" $ESXHost.Name 
+					$VMHostEsxCli.vsan.network.remove.invoke($WitnessArgs)
+				}
+				default {
+					# Set the VMKernel Interface desired for Witness Traffic
+					$WitnessArgs = $VMHostEsxCli.vsan.network.ip.add.CreateArgs()
+					$WitnessArgs.interfacename = $Vmk
+					$WitnessArgs.traffictype = "witness"
+					Write-Host "Adding vSAN Witness Traffic to " $Vmk "on host" $ESXHost.Name
+					$VMHostEsxCli.vsan.network.ip.add.Invoke($WitnessArgs)
+				}
+			}
+
+		}
+					
+	} else {
+		
+		# Throw and error message that this isn't a vSAN Enabled Cluster.
+	Write-Host "The cluster ($Cluster) does not have vSAN enabled."
+	}
+
+
+	
+}
+
+
+# Export Functions for 2 Node vSAN
+Export-ModuleMember -Function Get-Vsan2NodeForcedCache
+Export-ModuleMember -Function Set-Vsan2NodeForcedCache
+
+# Export Functions for the vSAN Witness Deployment
+Export-ModuleMember -Function Set-VsanStretchedClusterWitness
+Export-ModuleMember -Function New-VsanStretchedClusterWitness
+Export-ModuleMember -Function Set-VsanWitnessNetwork
+Export-ModuleMember -Function Set-VsanWitnessNetworkRoute
+Export-ModuleMember -Function Get-VsanWitnessNetworkRoute 
+Export-ModuleMember -Function Remove-VsanWitnessNetworkRoute
+Export-ModuleMember -Function Set-VsanWitnessNtp
+Export-ModuleMember -Function Add-VsanWitnessHost
+Export-ModuleMember -Function Get-VsanWitnessVMkernel
+Export-ModuleMember -Function Set-VsanWitnessVMkernel
+
+# Export Functions for vSAN Hosts
+Export-ModuleMember -Function Get-VsanHostVMkernelTrafficType
+Export-ModuleMember -Function Set-VsanHostWitnessTraffic
+
+# Export Function for VM Placement
+Export-ModuleMember -Function Set-VsanStretchedClusterDrsRules
