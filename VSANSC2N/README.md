@@ -1,12 +1,19 @@
 # Module for vSAN Stretched Cluster & 2 Node
 
 I took some of my existing scripts and combined them into a module
-# Export Functions for 2 Node vSAN
+
+Setup requires the psd1/psm1 files to be put in a VSANSC2N directory under Powershell Modules or you can use Import-Module and the path to these.
+
+Tested on PowerCLI 6.5.4 against vSphere 6.5/vSAN 6.6
+
+Not supported by VMware, use at your own risk.
+
+# Functions for 2 Node vSAN
 Get-Vsan2NodeForcedCache – Determine state of DOMOwnerForceWarmCache of a cluster
 
 Set-Vsan2NodeForcedCache – Set DOMOwnerForceWarmCache for a cluster, good for Hybrid 2 Node
  
-# Export Functions for the vSAN Witness Deployment
+# Functions for the vSAN Witness Deployment
 Set-VsanStretchedClusterWitness – Set the vSAN Witness Appliance for a Stretched Cluster
 
 New-VsanStretchedClusterWitness – Deploy a new vSAN Witness Appliance
@@ -27,10 +34,11 @@ Get-VsanWitnessVMkernel – Get the current VMkernel that is tagged for vSAN Tra
 
 Set-VsanWitnessVMkernel – Set a VMkernel for vSAN Traffic – Only 1 and remove any extras
  
-# Export Functions for vSAN Hosts
+# Functions for vSAN Hosts
 Get-VsanHostVMkernelTrafficType – Get a list of traffic types for all hosts in a cluster
 
 Set-VsanHostWitnessTraffic – Set Witness traffic for hosts in a 2 Node cluster
  
-# Export Function for VM Placement
+# Function for VM Placement
 Set-VsanStretchedClusterDrsRules – Place VM’s on either site based on a VM tag
+
