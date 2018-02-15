@@ -24,7 +24,7 @@ GUID = '77c2d386-9146-4917-be31-3f122bf3e83b'
 Author = 'Jase McCarty'
 
 # Company or vendor of this module
-CompanyName = 'VMware, Inc.'
+CompanyName = 'Unknown'
 
 # Copyright statement for this module
 Copyright = '(c) Jase McCarty. All rights reserved.'
