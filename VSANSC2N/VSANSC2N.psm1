@@ -14,6 +14,10 @@ This module combines a few sample Stretched Cluster & 2 Node scripts
 
 #>
 Function runGuestOpInESXiVM() {
+# Credit William Lam
+# Using PowerCLI to invoke Guest Operations API to a Nested ESXi VM
+# http://www.virtuallyghetto.com/2015/07/using-powercli-to-invoke-guest-operations-api-to-a-nested-esxi-vm.html
+
 	param(
 		$vm_moref,
 		$guest_username, 
