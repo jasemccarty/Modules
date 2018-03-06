@@ -625,7 +625,6 @@ Function Set-VsanWitnessNetwork {
 			}
 		}
 }
-
 Function Set-VsanWitnessNetworkRoute {
 
 	<#
@@ -707,7 +706,6 @@ Function Get-VsanWitnessNetworkRoute {
 	Write-Host "Getting Static Routes for the Witness Host $Name"
 	Get-VMHostRoute -VMHost $WitnessHost 
 }
-
 Function Remove-VsanWitnessNetworkRoute {
 	<#
 	.SYNOPSIS
@@ -751,7 +749,6 @@ Function Remove-VsanWitnessNetworkRoute {
 	$Routes = Get-VMHostRoute $WitnessHost | Where-Object {$_.Destination -contains $Destination}
 	Remove-VMHostRoute -VMHostRoute $Routes -Confirm:$false
 }
-
 Function Set-VsanWitnessNtp {
 	<#
 	.SYNOPSIS
@@ -802,7 +799,6 @@ Function Set-VsanWitnessNtp {
 	Get-VmHostService -VMHost $WitnessHost | Where-Object {$_.key -eq "ntpd"} | Set-VMHostService -policy "automatic"
 	
 }
-
 Function Add-VsanWitnessHost {
 	<#
 	.SYNOPSIS
@@ -859,7 +855,6 @@ Function Add-VsanWitnessHost {
 	Add-VMHost $NewWitnessName -Location $WitnessDC -user root -password $Pass -Force
 
 }
-
 Function Get-VsanWitnessVMkernel {
 	<#
 	.SYNOPSIS
@@ -975,7 +970,6 @@ Function Get-VsanWitnessVMkernel {
 	}
 
 }
-
 Function Set-VsanWitnessVMkernel {
 	<#
 	.SYNOPSIS
@@ -1035,7 +1029,6 @@ Function Set-VsanWitnessVMkernel {
 	}
 
 }
-
 Function Get-VsanHostVMkernelTrafficType {
 	<#
 	.SYNOPSIS
@@ -1175,6 +1168,197 @@ Function Set-VsanHostWitnessTraffic {
 	
 }
 
+Function Get-VsanHostCapacity {
+
+# Set our Parameters
+[CmdletBinding()]Param(
+	[Parameter(Mandatory=$true)][String]$VsanHost
+	)
+
+	$vmhost = Get-VMHost -Name $VsanHost
+	If ($vmhost.Parent.VsanEnabled -eq $true) {
+
+		$vmhostView = Get-View $vmhost -Property Name,ConfigManager.VsanSystem,ConfigManager.VsanInternalSystem	
+		$vsanSys = Get-View -Id $vmhostView.ConfigManager.VsanSystem
+		$vsanIntSys = Get-View -Id $vmhostView.ConfigManager.VsanInternalSystem
+	
+		$vsanProps = @("owner","uuid","isSsd","capacity","capacityUsed","capacityReserved")
+		$results = $vsanIntSys.QueryPhysicalVsanDisks($vsanProps)
+		$vsanStatus = $vsanSys.QueryHostStatus()
+					
+		$json = $results | ConvertFrom-Json
+
+		foreach ($line in $json | Get-Member) {
+			# ensure owner is owned by ESXi host
+			Write-Host $line
+
+			if($vsanStatus.NodeUuid -eq $json.$($line.Name).owner) {
+				if($json.$($line.Name).isSsd) {
+					$totalSsdCapacity += $json.$($line.Name).capacity
+					$totalSsdCapacityUsed += $json.$($line.Name).capacityUsed
+					$totalSsdCapacityReserved += $json.$($line.Name).capacityReserved
+				} else {
+					$totalMdCapacity += $json.$($line.Name).capacity
+					$totalMdCapacityUsed += $json.$($line.Name).capacityUsed
+					$totalMdCapacityReserved += $json.$($line.Name).capacityReserved
+				}				
+			}
+		}
+
+
+
+		$totalSsdCapacityReservedPercent = [int]($totalSsdCapacityReserved / $totalSsdCapacity * 100)
+		$totalSsdCapacityUsedPercent = [int]($totalSsdCapacityUsed / $totalSsdCapacity * 100)
+		$totalMdCapacityReservedPercent = [int]($totalMdCapacityReserved / $totalMdCapacity * 100)
+		$totalMdCapacityUsedPercent = [int]($totalMdCapacityUsed / $totalMdCapacity * 100)
+		
+		$Details = "" |Select vSANHost, TotalSsdCapacity, TotalSsdCapacityReserved, TotalSsdCapacityUsed,TotalSsdCapacityReservedPercent, TotalSsdCapacityUsedPercent, TotalMdCapacity, TotalMdCapacityReserved, TotalMdCapacityUsed, TotalMdCapacityReservedPercent, TotalMdCapacityUsedPercent
+		$Details.VsanHost = $vmhost.Name + "`n"
+		$Details.TotalSsdCapacity = [math]::round($totalSsdCapacity /1GB,2).ToString() + " GB"
+		$Details.TotalSsdCapacityReserved = [math]::round($totalSsdCapacityReserved /1GB,2).ToString() + " GB"
+		$Details.TotalSsdCapacityUsed = [math]::round($totalSsdCapacityUsed /1GB,2).ToString() + " GB"
+		$Details.TotalSsdCapacityReservedPercent = $totalSsdCapacityReservedPercent.ToString() + "%"
+		$Details.TotalSsdCapacityUsedPercent = $totalSsdCapacityUsedPercent.ToString() + "%`n"
+		$Details.TotalMdCapacity = [math]::round($totalMdCapacity /1GB,2).ToString() + " GB"
+		$Details.TotalMdCapacityReserved = [math]::round($totalMdCapacityReserved /1GB,2).ToString() + " GB"
+		$Details.TotalMdCapacityUsed = [math]::round($totalMdCapacityUsed /1GB,2).ToString() + " GB"
+		$Details.TotalMdCapacityReservedPercent = $totalMdCapacityReservedPercent.ToString() + "%"
+		$Details.TotalMdCapacityUsedPercent = $totalMdCapacityUsedPercent.ToString() + "%"
+		$vsanMaxConfigInfo += $Details
+		
+		$totalSsdCapacity = 0
+		$totalSsdCapacityReserved = 0
+		$totalSsdCapacityUsed = 0
+		$totalSsdCapacityReservedPercent = 0
+		$totalSsdCapacityUsedPercent = 0
+		$totalMdCapacity = 0
+		$totalMdCapacityReserved = 0
+		$totalMdCapacityUsed = 0
+		$totalMdCapacityReservedPercent = 0
+		$totalMdCapacityUsedPercent = 0
+
+		$vsanMaxConfigInfo
+	} else {
+		Write-Host "Cluster does not have vSAN enabled"
+	}
+
+
+}
+
+Function Set-VsanStretchedClusterPreferredFaultDomain {
+	<#
+    .SYNOPSIS
+       This function will set the Preferred Fault Domain for a vSAN Stretched Cluster
+    .DESCRIPTION
+       This function will set the Preferred Fault Domain for a vSAN Stretched Cluster
+
+    .PARAMETER ClusterName
+       Specifies the name of the Cluster you set the Fault Domain for
+    .PARAMETER NewWitness
+       Specifies the name of the Preferred Fault Domain.
+
+    .EXAMPLE
+       PS C:\> Set-VsanStretchedPreferredFaultDomain -ClusterName <Cluster Name> -PreferredFaultDomain <New Witness> -Alternate $true
+
+    .NOTES
+       Author                                    : Jase McCarty
+       Version                                   : 0.1
+       ==========Tested Against Environment==========
+       VMware vSphere Hypervisor(ESXi) Version   : 6.5
+       VMware vCenter Server Version             : 6.5
+       PowerCLI Version                          : PowerCLI 6.5.4
+       PowerShell Version                        : 3.0
+    #>
+
+	# Set our Parameters
+    [CmdletBinding()]Param(
+    [Parameter(Mandatory=$True)][string]$ClusterName,
+	[Parameter(Mandatory = $false)][String]$PreferredFaultDomain,
+	[Parameter(Mandatory = $false)][String]$Alternate
+    )
+
+    # Check to see the cluster exists
+    Try {
+	    # Check to make sure the New Witness Host has already been added to vCenter
+	    $Cluster = Get-Cluster -Name $ClusterName -ErrorAction Stop
+    }
+	    Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]
+    {
+	    Write-Host "The cluster, $ClusterName, was not found.               " -foregroundcolor red -backgroundcolor white
+	    Write-Host "Please enter a valid cluster name and rerun this script."  -foregroundcolor black -backgroundcolor white
+	    Exit
+    }		
+
+    # Check to make sure we are dealing with a vSAN cluster
+	If($Cluster.VsanEnabled){
+			
+		# Let's go grab the vSAN Cluster's Configuration
+		$VsanConfig = Get-VsanClusterConfiguration -Cluster $Cluster
+
+		# If we're dealing with a Stretched Cluster architecture, then we can proceed
+		If($VsanConfig.StretchedClusterEnabled) {
+
+			# We'll need to get the Preferred Fault Domain, and be sure to set it as Preferred when setting up the new Witness
+			$PFD = $VsanConfig.PreferredFaultDomain			
+
+			# Get the current Fault Domains
+			$SCFD = Get-VsanFaultDomain -Cluster $ClusterName
+
+			# Assign the FDs to variables
+			$FD0 = $SCFD[0]
+			$FD1 = $SCFD[1]
+
+			# Check to see if we are setting a specific Fault Domain
+			If ($PreferredFaultDomain) {
+
+				# Get the Fault Domain that matches the input
+				$FDInput = Get-VsanFaultDomain -Name $PreferredFaultDomain -ErrorAction Ignore
+
+				# Check to see if the Fault Domain provided is a current Fault Domain or not
+				If ($FDInput -in $SCFD) {
+
+					If ($PFD -ne $FDInput) {
+ 						# If the current Preferred Fault Domain is not the same as the input, change the Preferred Fault Domain to the one named
+						Set-VsanClusterConfiguration -Configuration $ClusterName -PreferredFaultDomain $FDInput
+					} else {
+						# If the current Preferred Fault Domain is the same as the input, do not make any changes
+						Write-Host "The Preferred Fault Domain is already" $PFD
+					}
+				} else {
+					# Exit because the Fault Domain name does not match either Fault Domin in the Stretched Cluster
+					Write-Host $PreferredFaultDomain "not a valid Fault Domain"
+					exit
+				}
+			} else {
+				# Check to see if the Alternate variable is passed
+				If ($Alternate) {
+				
+					# Check to see if an action to flip to the alternate Fault Domain as Preferred
+					If ($Alternate -eq $true) {
+						
+						If ($FD0 -eq $PFD) {
+							# If FD0 is the current preferred, then make $FD1 the preferred
+							Set-VsanClusterConfiguration -Configuration $ClusterName -PreferredFaultDomain $FD1
+						} else {
+							# If FD1 is the current preferred, then make $FD0 the preferred
+							Set-VsanClusterConfiguration -Configuration $ClusterName -PreferredFaultDomain $FD0
+						}
+					} else {
+						# Indicate that the Alternate variable must be True
+						Write-Host "Alternate must be '$true' to perform an alterate Fault Domain operation"
+					}
+				} 
+			}
+				
+		} else {
+
+			# Report that the cluster is not a Stretched Cluster
+			Write-Host "$Cluster.Name is not a Stretched Cluster " -foregroundcolor black -backgroundcolor green
+			
+		}
+		            
+    }
+}
 
 # Export Functions for 2 Node vSAN
 Export-ModuleMember -Function Get-Vsan2NodeForcedCache
@@ -1195,6 +1379,8 @@ Export-ModuleMember -Function Set-VsanWitnessVMkernel
 # Export Functions for vSAN Hosts
 Export-ModuleMember -Function Get-VsanHostVMkernelTrafficType
 Export-ModuleMember -Function Set-VsanHostWitnessTraffic
+Export-ModuleMember -Function Get-VsanHostCapacity
 
-# Export Function for VM Placement
+# Export Function for Stretched Clusters or 2 Node
 Export-ModuleMember -Function Set-VsanStretchedClusterDrsRules
+Export-ModuleMember -Function Set-VsanStretchedClusterPreferredFaultDomain

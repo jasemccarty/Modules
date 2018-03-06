@@ -39,6 +39,8 @@ Get-VsanHostVMkernelTrafficType – Get a list of traffic types for all hosts in
 
 Set-VsanHostWitnessTraffic – Set Witness traffic for hosts in a 2 Node cluster
  
-# Function for VM Placement
-Set-VsanStretchedClusterDrsRules – Place VM’s on either site based on a VM tag
+# Functions for Stretched Clusters or 2 Node
+Set-VsanStretchedClusterDrsRules - Place VM’s on either site based on a VM tag
+
+Set-VsanStretchedClusterPreferredFaultDomain - Set or Toggle the Current Preferred Fault Domain
 
