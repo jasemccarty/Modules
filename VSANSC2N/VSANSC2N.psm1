@@ -1189,15 +1189,15 @@ Function Set-VsanHostWitnessTraffic {
 	This function will list any vSAN Host VMkernel Ports tagged for Witness Traffic
 	.DESCRIPTION
 	This function will list any vSAN Host VMkernel Ports tagged for Witness Traffic
-	.PARAMETER Cluster
-	The vSAN Cluster to check
+	.PARAMETER VMHost
+	The ESXi Host to check
 	.PARAMETER Vmk
 	The VMkernel Interface to set the traffic type for
 	.PARAMETER Option
 	Set or Unset
 
 	.EXAMPLE
-	PS C:\> Set-VsanHostWitnessTraffic -Cluster <Witness Name> -Vmk <VMkernel> -Option <enable/disable>
+	PS C:\> Set-VsanHostWitnessTraffic -VMHost <VMHost> -Vmk <VMkernel> -Option <enable/disable>
 
 	.NOTES
 	Author                                    : Jase McCarty
@@ -1211,50 +1211,31 @@ Function Set-VsanHostWitnessTraffic {
 	
 	# Set our Parameters
 	[CmdletBinding()]Param(
-	[Parameter(Mandatory=$true)][String]$Cluster,
+	[Parameter(Mandatory=$true)][String]$VMHost,
 	[Parameter(Mandatory=$true)][String]$Vmk,
 	[Parameter(Mandatory=$false)][String]$Option	
 	)
-	
-	# Get the Cluster Name
-	$VsanCluster = Get-Cluster -Name $Cluster
-	
-	# Check to make sure vSAN is enabled
-	If($VsanCluster.VsanEnabled){
 
-		# Cycle through each ESXi Host in the cluster
-		Foreach ($ESXHost in ($VsanCluster |Get-VMHost |Sort-Object Name)){
-		
-			# Create an EsxCli variable for the host
-			$VMHostEsxCli = Get-EsxCli -VMHost $ESXHost -V2
+	$VMHostEsxCli = Get-EsxCli -VMHost $VMHost -V2
 
-			Switch ($Option) {
-				"remove" {
-					# Remove the witness traffic type from the selected VMkernel
-					$WitnessArgs = $VMHostEsxCli.vsan.network.ip.add.CreateArgs()
-					$WitnessArgs.interfacename = $Vmk
-					Write-Host "Removing vSAN Witness Traffic from" $Vmk "on host" $ESXHost.Name 
-					$VMHostEsxCli.vsan.network.remove.invoke($WitnessArgs)
-				}
-				default {
-					# Set the VMKernel Interface desired for Witness Traffic
-					$WitnessArgs = $VMHostEsxCli.vsan.network.ip.add.CreateArgs()
-					$WitnessArgs.interfacename = $Vmk
-					$WitnessArgs.traffictype = "witness"
-					Write-Host "Adding vSAN Witness Traffic to " $Vmk "on host" $ESXHost.Name
-					$VMHostEsxCli.vsan.network.ip.add.Invoke($WitnessArgs)
-				}
-			}
-
+	Switch ($Option) {
+		"remove" {
+			# Remove the witness traffic type from the selected VMkernel
+			$WitnessArgs = $VMHostEsxCli.vsan.network.ip.add.CreateArgs()
+			$WitnessArgs.interfacename = $Vmk
+			Write-Host "Removing vSAN Witness Traffic from" $Vmk "on host" $ESXHost.Name 
+			$VMHostEsxCli.vsan.network.remove.invoke($WitnessArgs)
 		}
-					
-	} else {
-		
-		# Throw and error message that this isn't a vSAN Enabled Cluster.
-	Write-Host "The cluster ($Cluster) does not have vSAN enabled."
+		default {
+			# Set the VMKernel Interface desired for Witness Traffic
+			$WitnessArgs = $VMHostEsxCli.vsan.network.ip.add.CreateArgs()
+			$WitnessArgs.interfacename = $Vmk
+			$WitnessArgs.traffictype = "witness"
+			Write-Host "Adding vSAN Witness Traffic to " $Vmk "on host" $ESXHost.Name
+			$VMHostEsxCli.vsan.network.ip.add.Invoke($WitnessArgs)
+		}
+
 	}
-
-
 	
 }
 Function Get-VsanHostCapacity {
