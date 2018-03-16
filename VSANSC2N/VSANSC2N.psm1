@@ -2,9 +2,9 @@
 Module: VSANSC2N
 Created on: 2/14/2018
 Created by: Jase McCarty
-Github: http://www.github.com/jasemccarty
+Github: https://www.github.com/jasemccarty
 Twitter: @jasemccarty
-Website: http://www.jasemccarty.com
+Website: https://www.jasemccarty.com
 ===========================================================================
 
 .DESCRIPTION
@@ -14,88 +14,181 @@ This module combines a few sample Stretched Cluster & 2 Node scripts
 
 #>
 Function runGuestOpInESXiVM() {
-# Credit William Lam
-# Using PowerCLI to invoke Guest Operations API to a Nested ESXi VM
-# http://www.virtuallyghetto.com/2015/07/using-powercli-to-invoke-guest-operations-api-to-a-nested-esxi-vm.html
+	# Credit William Lam
+	# Using PowerCLI to invoke Guest Operations API to a Nested ESXi VM
+	# https://www.virtuallyghetto.com/2015/07/using-powercli-to-invoke-guest-operations-api-to-a-nested-esxi-vm.html
+	
+		param(
+			$vm_moref,
+			$guest_username, 
+			$guest_password,
+			$guest_command_path,
+			$guest_command_args
+		)
+		
+		# Get Session information
+		$session = $global:DefaultVIServer
+	
+		# Guest Ops Managers
+		$guestOpMgr = Get-View $session.ExtensionData.Content.GuestOperationsManager
+		$authMgr = Get-View $guestOpMgr.AuthManager
+		$procMgr = Get-View $guestOpMgr.processManager
+		
+		# Create Auth Session Object
+		$auth = New-Object VMware.Vim.NamePasswordAuthentication
+		$auth.username = $guest_username
+		$auth.password = $guest_password
+		$auth.InteractiveSession = $false
+		
+		# Program Spec
+		$progSpec = New-Object VMware.Vim.GuestProgramSpec
+		# Full path to the command to run inside the guest
+		$progSpec.programPath = "$guest_command_path"
+		$progSpec.workingDirectory = "/tmp"
+		# Arguments to the command path, must include "++goup=host/vim/tmp" as part of the arguments
+		$progSpec.arguments = "++group=host/vim/tmp $guest_command_args"
+		
+		# Issue guest op command
+		$cmd_pid = $procMgr.StartProgramInGuest($vm_moref,$auth,$progSpec)
+}
+Function New-VsanStretchedCluster {
+	<#
+	.SYNOPSIS
+		This function will create a 2 Node or Stretched vSAN Cluster
+	.DESCRIPTION
+		This function will create a 2 Node or Stretched vSAN Cluster
 
-	param(
-		$vm_moref,
-		$guest_username, 
-		$guest_password,
-		$guest_command_path,
-		$guest_command_args
+	.PARAMETER ClusterName
+		Specifies the name of the Cluster you want to set the vSAN Witness Host for.
+	.PARAMETER Witness
+		Specifies the name of the new vSAN Witness Host want to use.
+
+	.EXAMPLE
+		PS C:\> New-VsanStretchedClusterWitness -ClusterName <Cluster Name> -Witness <Witness>
+
+	.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+	#>
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$ClusterName,
+	[Parameter(Mandatory = $true)][String]$Witness
 	)
-	
-	# Get Session information
-	$session = $global:DefaultVIServer
 
-	# Guest Ops Managers
-	$guestOpMgr = Get-View $session.ExtensionData.Content.GuestOperationsManager
-	$authMgr = Get-View $guestOpMgr.AuthManager
-	$procMgr = Get-View $guestOpMgr.processManager
-	
-	# Create Auth Session Object
-	$auth = New-Object VMware.Vim.NamePasswordAuthentication
-	$auth.username = $guest_username
-	$auth.password = $guest_password
-	$auth.InteractiveSession = $false
-	
-	# Program Spec
-	$progSpec = New-Object VMware.Vim.GuestProgramSpec
-	# Full path to the command to run inside the guest
-	$progSpec.programPath = "$guest_command_path"
-	$progSpec.workingDirectory = "/tmp"
-	# Arguments to the command path, must include "++goup=host/vim/tmp" as part of the arguments
-	$progSpec.arguments = "++group=host/vim/tmp $guest_command_args"
-	
-	# Issue guest op command
-	$cmd_pid = $procMgr.StartProgramInGuest($vm_moref,$auth,$progSpec)
+	# Check to see the cluster exists
+	Try {
+		# Check to make sure the New Witness Host has already been added to vCenter
+		$Cluster = Get-Cluster -Name $ClusterName -ErrorAction Stop
+	}
+		Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]
+	{
+		Write-Host "The cluster, $ClusterName, was not found.               " -foregroundcolor red -backgroundcolor white
+		Write-Host "Please enter a valid cluster name and rerun this script."  -foregroundcolor black -backgroundcolor white
+		Exit
+	}		
+		
+		# Determine whether this is a 2 Node or Stretched Cluster
+		$HostCount = $Cluster | Select-Object @{n="count";e={($_ | Get-VMHost).Count}}
+		Switch($HostCount.count){
+			"2" {$SCTYPE = "2 Node"}
+			default {$SCTYPE = "Stretched"}
+		}
+			
+		# Let's go grab the vSAN Cluster's Configuration
+		$VsanConfig = Get-VsanClusterConfiguration -Cluster $Cluster
+
+		# If we're dealing with a Stretched Cluster architecture, then we can proceed
+		If(-Not $VsanConfig.StretchedClusterEnabled) {
+
+			# Create Fault Domains for 2 Node vSAN
+			$Cluster | Set-Cluster -VsanEnabled:$true -Confirm:$false -ErrorAction SilentlyContinue
+			$VsanHosts = $Cluster | Get-VMHost
+			$PFD = New-VsanFaultDomain -VMHost $VsanHosts[0] -Name "Preferred" -Confirm:$false
+			$SFD = New-VsanFaultDomain -VMHost $VsanHosts[1] -Name "Secondary" -Confirm:$false
+			
+			# Get the Witness Host
+			$WitnessHost = Get-VMHost -Name $Witness -ErrorAction Stop
+
+			# See if it is the VMware vSAN Witness Appliance
+			$IsVsanWitnessAppliance = Get-AdvancedSetting -Entity $WitnessHost -Name Misc.vsanWitnessVirtualAppliance
+					
+
+			# If it is the VMware vSAN Witness Appliance, then proceed
+				If ($IsVsanWitnessAppliance.Value -eq "1"){
+					Write-Host "$Witness is a vSAN Witness Appliance." -foregroundcolor black -backgroundcolor green
+					
+					# Check to make sure a VMKernel port is tagged for vSAN Traffic, otherwise exit. Could possibly tag a VMkernel next time
+					If ( Get-VMHost $Witness | Get-VMHostNetworkAdapter | Where-Object {$_.VsanTrafficEnabled}) {
+						Write-Host "$Witness has a VMKernel port setup for vSAN Traffic. Proceeding."  -foregroundcolor black -backgroundcolor green
+					} else {
+						Write-Host "$Witness does not have a VMKernel port setup for vSAN Traffic. Exiting" -foregroundcolor red -backgroundcolor white
+						Exit 
+					}
+				} else {
+					# The Witness isn't a vSAN Witness Appliance, so exit 
+					Write-Host "$Witness is not a vSAN Witness Appliance, stopping" -foregroundcolor red -backgroundcolor white
+					Write-Host "This script only supports using the vSAN Witness Appliance"  -foregroundcolor red -backgroundcolor white
+					Exit
+				}
+				
+				# Set the cluster configuration to Stretched/2 Node, with the witness and the preferred fault domain
+				Write-Host "Adding Witness $Witness and enabling the $SCTYPE Cluster" -foregroundcolor black -backgroundcolor white
+				$VsanSCCluster = Set-VsanClusterConfiguration -Configuration $Cluster -StretchedClusterEnabled $True -PreferredFaultDomain $PFD -WitnessHost $Witness -WitnessHostCacheDisk mpx.vmhba1:C0:T2:L0 -WitnessHostCapacityDisk mpx.vmhba1:C0:T1:L0
+				
+			} 
 }
 
 Function Set-VsanStretchedClusterWitness {
 	<#
-    .SYNOPSIS
-       This function will set an existing vSAN Witness Appliance as a Witness for a 2 Node or Stretched vSAN Cluster
-    .DESCRIPTION
-       Use this function to set the vSAN Witness Host for a 2 Node or Stretched vSAN Cluster.
+	.SYNOPSIS
+		This function will set an existing vSAN Witness Appliance as a Witness for a 2 Node or Stretched vSAN Cluster
+	.DESCRIPTION
+		Use this function to set the vSAN Witness Host for a 2 Node or Stretched vSAN Cluster.
 
-    .PARAMETER ClusterName
-       Specifies the name of the Cluster you want to set the vSAN Witness Host for.
-    .PARAMETER NewWitness
-       Specifies the name of the new vSAN Witness Host want to use.
+	.PARAMETER ClusterName
+		Specifies the name of the Cluster you want to set the vSAN Witness Host for.
+	.PARAMETER NewWitness
+		Specifies the name of the new vSAN Witness Host want to use.
 
-    .EXAMPLE
-       PS C:\> Set-VsanStretchedClusterWitness -ClusterName <Cluster Name> -NewWitness <New Witness>
+	.EXAMPLE
+		PS C:\> Set-VsanStretchedClusterWitness -ClusterName <Cluster Name> -Witness <Witness>
 
-    .NOTES
-       Author                                    : Jase McCarty
-       Version                                   : 0.1
-       ==========Tested Against Environment==========
-       VMware vSphere Hypervisor(ESXi) Version   : 6.5
-       VMware vCenter Server Version             : 6.5
-       PowerCLI Version                          : PowerCLI 6.5.4
-       PowerShell Version                        : 3.0
-    #>
+	.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+	#>
 
 	# Set our Parameters
-    [CmdletBinding()]Param(
-    [Parameter(Mandatory=$True)][string]$ClusterName,
-    [Parameter(Mandatory = $true)][String]$NewWitness
-    )
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$ClusterName,
+	[Parameter(Mandatory = $true)][String]$NewWitness
+	)
 
-    # Check to see the cluster exists
-    Try {
-	    # Check to make sure the New Witness Host has already been added to vCenter
-	    $Cluster = Get-Cluster -Name $ClusterName -ErrorAction Stop
-    }
-	    Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]
-    {
-	    Write-Host "The cluster, $ClusterName, was not found.               " -foregroundcolor red -backgroundcolor white
-	    Write-Host "Please enter a valid cluster name and rerun this script."  -foregroundcolor black -backgroundcolor white
-	    Exit
-    }		
+	# Check to see the cluster exists
+	Try {
+		# Check to make sure the New Witness Host has already been added to vCenter
+		$Cluster = Get-Cluster -Name $ClusterName -ErrorAction Stop
+	}
+		Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]
+	{
+		Write-Host "The cluster, $ClusterName, was not found.               " -foregroundcolor red -backgroundcolor white
+		Write-Host "Please enter a valid cluster name and rerun this script."  -foregroundcolor black -backgroundcolor white
+		Exit
+	}		
 
-    # Check to make sure we are dealing with a vSAN cluster
+	# Check to make sure we are dealing with a vSAN cluster
 	If($Cluster.VsanEnabled){
 		
 		# Determine whether this is a 2 Node or Stretched Cluster
@@ -194,134 +287,134 @@ Function Set-VsanStretchedClusterWitness {
 				Write-Host "$Cluster.Name is not a Stretched Cluster " -foregroundcolor black -backgroundcolor green
 				
 			}
-		            
-    }
+					
+	}
 }
 Function Set-Vsan2NodeForcedCache {
 	<#
-    .SYNOPSIS
-       This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
-    .DESCRIPTION
-       This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
+	.SYNOPSIS
+		This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
+	.DESCRIPTION
+		This function will enable/disable Forced Caching across hosts on a 2 Node vSAN Cluster
 
-    .PARAMETER ClusterName
-       Specifies the name of the Cluster you want to set change the Forced Cache state for.
-    .PARAMETER ForcedCache
-       Specifies whether to enable or disable Forced Cache
+	.PARAMETER ClusterName
+		Specifies the name of the Cluster you want to set change the Forced Cache state for.
+	.PARAMETER ForcedCache
+		Specifies whether to enable or disable Forced Cache
 
-    .EXAMPLE
-       PS C:\> Set-Vsan2NodeForcedCache -ClusterName <Cluster Name> -ForcedCache <enable/disable>
+	.EXAMPLE
+		PS C:\> Set-Vsan2NodeForcedCache -ClusterName <Cluster Name> -ForcedCache <enable/disable>
 
-    .NOTES
-       Author                                    : Jase McCarty
-       Version                                   : 0.1
-       ==========Tested Against Environment==========
-       VMware vSphere Hypervisor(ESXi) Version   : 6.5
-       VMware vCenter Server Version             : 6.5
-       PowerCLI Version                          : PowerCLI 6.5.4
-       PowerShell Version                        : 3.0
-    #>
+	.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+	#>
 
-    # Set our Parameters
-    [CmdletBinding()]Param(
+	# Set our Parameters
+	[CmdletBinding()]Param(
 	[Parameter(Mandatory=$True)][string]$ClusterName,
 	[Parameter(Mandatory = $true)][ValidateSet('enable','disable')][String]$ForcedCache
-  )
-    
-  # Get the Cluster Name
-  $Cluster = Get-Cluster -Name $ClusterName
-  
-  # Check to ensure we have either enable or disable, and set our values/text
-  Switch ($ForcedCache) {
-      "disable" { 
-          $ForcedValue = "0"
-          $ForcedText  = "Default (local) Read Caching"
-          }
-      "enable" {
-          $ForcedValue = "1"
-          $ForcedText  = "Forced Warm Cache" 
-          }
-      default {
-          write-host "Please include the parameter -ForcedCache enable or -ForcedCache disabled"
-          exit
-          }
-      }
-      # Display the Cluster
-      Write-Host Cluster: $($Cluster.name)
-      
-      # Check to make sure we only have 2 Nodes in the cluster and vSAN is enabled
-      $HostCount = $Cluster | Select-Object @{n="count";e={($_ | Get-VMHost).Count}}
-      If($HostCount.count -eq "2" -And $Cluster.VsanEnabled){
-  
-          # Cycle through each ESXi Host in the cluster
-          Foreach ($ESXHost in ($Cluster |Get-VMHost |Sort-Object Name)){
-          
-            # Get the current setting for diskIoTimeout
-            $ForcedCache = Get-AdvancedSetting -Entity $ESXHost -Name "VSAN.DOMOwnerForceWarmCache"
-                    
-              # By default, if the IO Timeout doesn't align with KB2135494
-            # the setting may or may not be changed based on Script parameters
-                  If($ForcedCache.value -ne $ForcedValue){
-  
-              # Show that host is being updated
-              Write-Host "2 Node $ForcedText Setting for $ESXHost"
-              $ForcedCache | Set-AdvancedSetting -Value $ForcedValue -Confirm:$false
-  
-                  } else {
-  
-              # Show that the host is already set for the right value
-              Write-Host "$ESXHost is already configured for $ForcedText"
-  
-          }
-      }
-                      
-      } else {
-          
-          # Throw and error message that this isn't a 2 Node Cluster.
-      Write-Host "The cluster ($ClusterName) is not a 2 Node cluster and/or does not have vSAN enabled."
-      }
+	)
+	
+	# Get the Cluster Name
+	$Cluster = Get-Cluster -Name $ClusterName
+	
+	# Check to ensure we have either enable or disable, and set our values/text
+	Switch ($ForcedCache) {
+		"disable" { 
+			$ForcedValue = "0"
+			$ForcedText  = "Default (local) Read Caching"
+			}
+		"enable" {
+			$ForcedValue = "1"
+			$ForcedText  = "Forced Warm Cache" 
+			}
+		default {
+			write-host "Please include the parameter -ForcedCache enable or -ForcedCache disabled"
+			exit
+			}
+		}
+		# Display the Cluster
+		Write-Host Cluster: $($Cluster.name)
+		
+		# Check to make sure we only have 2 Nodes in the cluster and vSAN is enabled
+		$HostCount = $Cluster | Select-Object @{n="count";e={($_ | Get-VMHost).Count}}
+		If($HostCount.count -eq "2" -And $Cluster.VsanEnabled){
+	
+			# Cycle through each ESXi Host in the cluster
+			Foreach ($ESXHost in ($Cluster |Get-VMHost |Sort-Object Name)){
+			
+			# Get the current setting for diskIoTimeout
+			$ForcedCache = Get-AdvancedSetting -Entity $ESXHost -Name "VSAN.DOMOwnerForceWarmCache"
+					
+				# By default, if the IO Timeout doesn't align with KB2135494
+			# the setting may or may not be changed based on Script parameters
+					If($ForcedCache.value -ne $ForcedValue){
+	
+				# Show that host is being updated
+				Write-Host "2 Node $ForcedText Setting for $ESXHost"
+				$ForcedCache | Set-AdvancedSetting -Value $ForcedValue -Confirm:$false
+	
+					} else {
+	
+				# Show that the host is already set for the right value
+				Write-Host "$ESXHost is already configured for $ForcedText"
+	
+			}
+		}
+						
+		} else {
+			
+			# Throw and error message that this isn't a 2 Node Cluster.
+		Write-Host "The cluster ($ClusterName) is not a 2 Node cluster and/or does not have vSAN enabled."
+		}
 }
 Function Get-Vsan2NodeForcedCache {
 	<#
-    .SYNOPSIS
-       This function will get the current state of Forced Caching across hosts on a 2 Node vSAN Cluster
-    .DESCRIPTION
-	   This function will get the current state of Forced Caching across hosts on a 2 Node vSAN Cluster
-	   
-    .PARAMETER ClusterName
-       Specifies the name of the Cluster you want to set change the Forced Cache state for.
+	.SYNOPSIS
+		This function will get the current state of Forced Caching across hosts on a 2 Node vSAN Cluster
+	.DESCRIPTION
+		This function will get the current state of Forced Caching across hosts on a 2 Node vSAN Cluster
+		
+	.PARAMETER ClusterName
+		Specifies the name of the Cluster you want to set change the Forced Cache state for.
 
-    .EXAMPLE
-       PS C:\> Get-Vsan2NodeForcedCache -ClusterName <Cluster Name>
+	.EXAMPLE
+		PS C:\> Get-Vsan2NodeForcedCache -ClusterName <Cluster Name>
 
-    .NOTES
-       Author                                    : Jase McCarty
-       Version                                   : 0.1
-       ==========Tested Against Environment==========
-       VMware vSphere Hypervisor(ESXi) Version   : 6.5
-       VMware vCenter Server Version             : 6.5
-       PowerCLI Version                          : PowerCLI 6.5.4
-       PowerShell Version                        : 3.0
-    #>
+	.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+	#>
 
-    # Set our Parameters
-    [CmdletBinding()]Param(
+	# Set our Parameters
+	[CmdletBinding()]Param(
 	[Parameter(Mandatory=$True)][string]$ClusterName
-  )
-    
+	)
+	
 	# Get the Cluster Name
 	$Cluster = Get-Cluster -Name $ClusterName
-  
+	
 	# Display the Cluster
-    Write-Host Cluster: $($Cluster.name)
-      
+	Write-Host Cluster: $($Cluster.name)
+		
 	# Check to make sure we only have 2 Nodes in the cluster and vSAN is enabled
 	$HostCount = $Cluster | Select-Object @{n="count";e={($_ | Get-VMHost).Count}}
 
 	If($HostCount.count -eq "2" -And $Cluster.VsanEnabled){		
 		# Cycle through each ESXi Host in the cluster
 		Foreach ($ESXHost in ($Cluster |Get-VMHost |Sort-Object Name)){
-          
+			
 			# Get the current setting for DOMOwnerForceWarmCache
 			$FORCEDCACHE = (Get-AdvancedSetting -Entity $ESXHost -Name 'VSAN.DOMOwnerForceWarmCache').Value
 
@@ -333,36 +426,36 @@ Function Get-Vsan2NodeForcedCache {
 			# Show the Forced Cache setting
 			Write-Host "$ESXHost has Forced Cache $message"
 		}                      
-      } else {
+		} else {
 			# Throw and error message that this isn't a 2 Node Cluster.
 			Write-Host "The cluster ($ClusterName) is not a 2 Node cluster and/or does not have vSAN enabled."
-      }
-  
-  
+		}
+	
+	
 
 }
 Function Set-VsanStretchedClusterDrsRules {
 	<#
-    .SYNOPSIS
-       This function will set vSphere DRS rules for a Stretched vSAN Cluster where VMs are using Tags
-    .DESCRIPTION
-       Use this function to set vSphere DRS rules for a Stretched vSAN Cluster.
+	.SYNOPSIS
+		This function will set vSphere DRS rules for a Stretched vSAN Cluster where VMs are using Tags
+	.DESCRIPTION
+		Use this function to set vSphere DRS rules for a Stretched vSAN Cluster.
 
-    .PARAMETER ClusterName
-       Specifies the name of the Cluster you want to set the vSAN Witness Host for.
+	.PARAMETER ClusterName
+		Specifies the name of the Cluster you want to set the vSAN Witness Host for.
 
-    .EXAMPLE
-       PS C:\> Set-VsanStretchedClusterDrsRules -ClusterName <Cluster Name>
+	.EXAMPLE
+		PS C:\> Set-VsanStretchedClusterDrsRules -ClusterName <Cluster Name>
 
-    .NOTES
-       Author                                    : Jase McCarty
-       Version                                   : 0.1
-       ==========Tested Against Environment==========
-       VMware vSphere Hypervisor(ESXi) Version   : 6.5
-       VMware vCenter Server Version             : 6.5
-       PowerCLI Version                          : PowerCLI 6.5.4
-       PowerShell Version                        : 3.0
-    #>
+	.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+	#>
 	
 	$Cluster = Get-Cluster -Name $ClusterName
 
@@ -452,7 +545,6 @@ Function Set-VsanStretchedClusterDrsRules {
 	}
 
 }
-
 Function New-VsanStretchedClusterWitness {
 		<#
 		.SYNOPSIS
@@ -521,7 +613,6 @@ Function New-VsanStretchedClusterWitness {
 		Import-VApp -Source $OVAPath -OvfConfiguration $ovfConfig -Name $Name -VMHost $TargetHost -Datastore $TargetDatastore -DiskStorageFormat Thin
 
 }
-
 Function Set-VsanWitnessNetwork {
 
 		<#
@@ -670,7 +761,6 @@ Function Set-VsanWitnessNetworkRoute {
 	New-VMHostRoute $WitnessHost -Destination $Destination -Gateway $Gateway -PrefixLength $Prefix -Confirm:$False
 
 }
-
 Function Get-VsanWitnessNetworkRoute {
 	<#
 	.SYNOPSIS
@@ -1057,7 +1147,7 @@ Function Get-VsanHostVMkernelTrafficType {
 	[Parameter(Mandatory=$true)][String]$Cluster,
 	[Parameter(Mandatory=$false)][String]$Type
 	)
-    
+	
 	# Get the Cluster Name
 	$VsanCluster = Get-Cluster -Name $Cluster
 	
@@ -1125,7 +1215,7 @@ Function Set-VsanHostWitnessTraffic {
 	[Parameter(Mandatory=$true)][String]$Vmk,
 	[Parameter(Mandatory=$false)][String]$Option	
 	)
-    
+	
 	# Get the Cluster Name
 	$VsanCluster = Get-Cluster -Name $Cluster
 	
@@ -1167,11 +1257,9 @@ Function Set-VsanHostWitnessTraffic {
 
 	
 }
-
 Function Get-VsanHostCapacity {
-
-# Set our Parameters
-[CmdletBinding()]Param(
+	# Set our Parameters
+	[CmdletBinding()]Param(
 	[Parameter(Mandatory=$true)][String]$VsanHost
 	)
 
@@ -1244,52 +1332,51 @@ Function Get-VsanHostCapacity {
 
 
 }
-
 Function Set-VsanStretchedClusterPreferredFaultDomain {
 	<#
-    .SYNOPSIS
-       This function will set the Preferred Fault Domain for a vSAN Stretched Cluster
-    .DESCRIPTION
-       This function will set the Preferred Fault Domain for a vSAN Stretched Cluster
+	.SYNOPSIS
+		This function will set the Preferred Fault Domain for a vSAN Stretched Cluster
+	.DESCRIPTION
+		This function will set the Preferred Fault Domain for a vSAN Stretched Cluster
 
-    .PARAMETER ClusterName
-       Specifies the name of the Cluster you set the Fault Domain for
-    .PARAMETER NewWitness
-       Specifies the name of the Preferred Fault Domain.
+	.PARAMETER ClusterName
+		Specifies the name of the Cluster you set the Fault Domain for
+	.PARAMETER NewWitness
+		Specifies the name of the Preferred Fault Domain.
 
-    .EXAMPLE
-       PS C:\> Set-VsanStretchedPreferredFaultDomain -ClusterName <Cluster Name> -PreferredFaultDomain <New Witness> -Alternate $true
+	.EXAMPLE
+		PS C:\> Set-VsanStretchedPreferredFaultDomain -ClusterName <Cluster Name> -PreferredFaultDomain <New Witness> -Alternate $true
 
-    .NOTES
-       Author                                    : Jase McCarty
-       Version                                   : 0.1
-       ==========Tested Against Environment==========
-       VMware vSphere Hypervisor(ESXi) Version   : 6.5
-       VMware vCenter Server Version             : 6.5
-       PowerCLI Version                          : PowerCLI 6.5.4
-       PowerShell Version                        : 3.0
-    #>
+	.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+	#>
 
 	# Set our Parameters
-    [CmdletBinding()]Param(
-    [Parameter(Mandatory=$True)][string]$ClusterName,
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$ClusterName,
 	[Parameter(Mandatory = $false)][String]$PreferredFaultDomain,
 	[Parameter(Mandatory = $false)][String]$Alternate
-    )
+	)
 
-    # Check to see the cluster exists
-    Try {
-	    # Check to make sure the New Witness Host has already been added to vCenter
-	    $Cluster = Get-Cluster -Name $ClusterName -ErrorAction Stop
-    }
-	    Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]
-    {
-	    Write-Host "The cluster, $ClusterName, was not found.               " -foregroundcolor red -backgroundcolor white
-	    Write-Host "Please enter a valid cluster name and rerun this script."  -foregroundcolor black -backgroundcolor white
-	    Exit
-    }		
+	# Check to see the cluster exists
+	Try {
+		# Check to make sure the New Witness Host has already been added to vCenter
+		$Cluster = Get-Cluster -Name $ClusterName -ErrorAction Stop
+	}
+		Catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException]
+	{
+		Write-Host "The cluster, $ClusterName, was not found.               " -foregroundcolor red -backgroundcolor white
+		Write-Host "Please enter a valid cluster name and rerun this script."  -foregroundcolor black -backgroundcolor white
+		Exit
+	}		
 
-    # Check to make sure we are dealing with a vSAN cluster
+	# Check to make sure we are dealing with a vSAN cluster
 	If($Cluster.VsanEnabled){
 			
 		# Let's go grab the vSAN Cluster's Configuration
@@ -1318,7 +1405,7 @@ Function Set-VsanStretchedClusterPreferredFaultDomain {
 				If ($FDInput -in $SCFD) {
 
 					If ($PFD -ne $FDInput) {
- 						# If the current Preferred Fault Domain is not the same as the input, change the Preferred Fault Domain to the one named
+							# If the current Preferred Fault Domain is not the same as the input, change the Preferred Fault Domain to the one named
 						Set-VsanClusterConfiguration -Configuration $ClusterName -PreferredFaultDomain $FDInput
 					} else {
 						# If the current Preferred Fault Domain is the same as the input, do not make any changes
@@ -1356,8 +1443,8 @@ Function Set-VsanStretchedClusterPreferredFaultDomain {
 			Write-Host "$Cluster.Name is not a Stretched Cluster " -foregroundcolor black -backgroundcolor green
 			
 		}
-		            
-    }
+					
+	}
 }
 
 # Export Functions for 2 Node vSAN
@@ -1382,5 +1469,6 @@ Export-ModuleMember -Function Set-VsanHostWitnessTraffic
 Export-ModuleMember -Function Get-VsanHostCapacity
 
 # Export Function for Stretched Clusters or 2 Node
+Export-ModuleMember -Function New-VsanStretchedCluster
 Export-ModuleMember -Function Set-VsanStretchedClusterDrsRules
 Export-ModuleMember -Function Set-VsanStretchedClusterPreferredFaultDomain
