@@ -110,7 +110,8 @@ Function New-VsanStretchedCluster {
 			# Create Fault Domains for 2 Node vSAN
 			$Cluster | Set-Cluster -VsanEnabled:$true -Confirm:$false -ErrorAction SilentlyContinue
 			$VsanHosts = $Cluster | Get-VMHost
-			$PFD = New-VsanFaultDomain -VMHost $VsanHosts[0] -Name "Preferred" -Confirm:$false
+			$PFD = Get-VsanFaultDomain -Name "Preferred" -ErrorAction SilentlyContinue
+			If (-Not $PFD) {$PFD = New-VsanFaultDomain -VMHost $VsanHosts[0] -Name "Preferred" -Confirm:$false}
 			$SFD = New-VsanFaultDomain -VMHost $VsanHosts[1] -Name "Secondary" -Confirm:$false
 			
 			# Get the Witness Host
@@ -144,7 +145,6 @@ Function New-VsanStretchedCluster {
 				
 			} 
 }
-
 Function Set-VsanStretchedClusterWitness {
 	<#
 	.SYNOPSIS
@@ -1001,65 +1001,8 @@ Function Get-VsanWitnessVMkernel {
 		}
 
 	}
-
-}Function Get-VsanWitnessVMkernel {
-	<#
-	.SYNOPSIS
-	This function will change the vSAN Witness Host VMkernel Interface used for vSAN Traffic
-	.DESCRIPTION
-	This function will change the vSAN Witness Host VMkernel Interface used for vSAN Traffic
-	.PARAMETER Name
-	The ESXi hostname of the vSAN Witness Appliance
-
-	.EXAMPLE
-	PS C:\> Get-VsanWitnessVMkernel -Name <Witness Name>
-
-	.NOTES
-	Author                                    : Jase McCarty
-	Version                                   : 0.1
-	==========Tested Against Environment==========
-	VMware vSphere Hypervisor(ESXi) Version   : 6.5
-	VMware vCenter Server Version             : 6.5
-	PowerCLI Version                          : PowerCLI 6.5.4
-	PowerShell Version                        : 3.0
-	#>
-	
-	# Set our Parameters
-	[CmdletBinding()]Param(
-	[Parameter(Mandatory=$true)][String]$Name
-	)
-
-	# Grab the Datacenter that Witnesses will reside in
-	$WitnessVM = Get-VMhost -Name $Name
-
-	# Grab the VMkernel interface(s) with vSAN Traffic Enabled
-	$VsanVMkernel = $WitnessVM | Get-VMHostNetworkAdapter -VMKernel | Where-Object {$_.VsanTrafficEnabled -eq $true}
-
-	Switch ($VsanVMkernel.Count) {
-		"0" {
-			Write-Host "No VMkernel Interfaces are tagged with vSAN Traffic"
-			Write-Host "Please enable vSAN Traffic on at least one VMkernel Interface"
-		}
-		"1" {
-			Switch ($VsanVMkernel.Name) {
-				"vmk0" {
-					Write-Host "vSAN Traffic is tagged on the Management VMkernel Interface:" $VsanVMkernel.Name
-				}
-				"vmk1" {
-					Write-Host "vSAN Traffic is tagged on the Witness VMkernel Interface:" $VsanVMkernel.Name				
-				}
-				default {
-					Write-Host "vSAN Traffic is tagged on an alternate VMkernel Interface:" $VsanVMkernel.Name
-				}
-			}
-		}
-		default {
-			Write-Host "There are more than 1 VMkernel Interfaces which have vSAN Traffic enabled"
-		}
-
-	}
-
 }
+
 Function Set-VsanWitnessVMkernel {
 	<#
 	.SYNOPSIS
@@ -1183,7 +1126,7 @@ Function Get-VsanHostVMkernelTrafficType {
 
 	
 }
-Function Set-VsanHostWitnessTraffic {
+Function Set-VsanHostWitnessTrafficType {
 	<#
 	.SYNOPSIS
 	This function will list any vSAN Host VMkernel Ports tagged for Witness Traffic
@@ -1197,7 +1140,7 @@ Function Set-VsanHostWitnessTraffic {
 	Set or Unset
 
 	.EXAMPLE
-	PS C:\> Set-VsanHostWitnessTraffic -VMHost <VMHost> -Vmk <VMkernel> -Option <enable/disable>
+	PS C:\> Set-VsanHostWitnessTraffic -VMHost <VMHost> -Vmk <VMkernel> -Option <enable/remove>
 
 	.NOTES
 	Author                                    : Jase McCarty
@@ -1281,7 +1224,7 @@ Function Get-VsanHostCapacity {
 		$totalMdCapacityReservedPercent = [int]($totalMdCapacityReserved / $totalMdCapacity * 100)
 		$totalMdCapacityUsedPercent = [int]($totalMdCapacityUsed / $totalMdCapacity * 100)
 		
-		$Details = "" |Select vSANHost, TotalSsdCapacity, TotalSsdCapacityReserved, TotalSsdCapacityUsed,TotalSsdCapacityReservedPercent, TotalSsdCapacityUsedPercent, TotalMdCapacity, TotalMdCapacityReserved, TotalMdCapacityUsed, TotalMdCapacityReservedPercent, TotalMdCapacityUsedPercent
+		$Details = "" |Select-Object vSANHost, TotalSsdCapacity, TotalSsdCapacityReserved, TotalSsdCapacityUsed,TotalSsdCapacityReservedPercent, TotalSsdCapacityUsedPercent, TotalMdCapacity, TotalMdCapacityReserved, TotalMdCapacityUsed, TotalMdCapacityReservedPercent, TotalMdCapacityUsedPercent
 		$Details.VsanHost = $vmhost.Name + "`n"
 		$Details.TotalSsdCapacity = [math]::round($totalSsdCapacity /1GB,2).ToString() + " GB"
 		$Details.TotalSsdCapacityReserved = [math]::round($totalSsdCapacityReserved /1GB,2).ToString() + " GB"
@@ -1427,6 +1370,100 @@ Function Set-VsanStretchedClusterPreferredFaultDomain {
 					
 	}
 }
+Function Add-VsanHostDiskGroup {
+	<#
+	.SYNOPSIS
+		This function add one or more disk groups to a vSAN host
+	.DESCRIPTION
+		This function add one or more disk groups to a vSAN host
+
+	.PARAMETER VMHost
+		Specifies the name of the vSAN host
+	.PARAMETER DiskType
+		Specifies the type of disk group Hybrid/All-Flash - Not implemented yet.
+	.PARAMETER CacheMax
+		Specifies the maximum size of a cache device. This is used to differentiate flash devices from cache/capacity tiers
+
+	.EXAMPLE
+		PS C:\> Add-VsanHostDiskGroup -VMHost $ESXHost -CacheMax 400 -DiskType Flash
+
+	.NOTES
+		Author                                    : Jase McCarty
+		Version                                   : 0.1
+		==========Tested Against Environment==========
+		VMware vSphere Hypervisor(ESXi) Version   : 6.5
+		VMware vCenter Server Version             : 6.5
+		PowerCLI Version                          : PowerCLI 6.5.4
+		PowerShell Version                        : 3.0
+	#>
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$True)][string]$VMHost,
+    [Parameter(Mandatory = $true)][String]$DiskType,
+    [Parameter(Mandatory = $true)][String]$CacheMax
+	)
+
+	# Get all of the local disks that are eligible for vSAN use
+    $VsanHostDisks = Get-VMHost -Name $VMHost | Get-VMHostHba | Get-ScsiLun | Where-Object {$_.VsanStatus -eq "Eligible"}
+
+	# There must be at least 2 disks 
+	# Need to add a check to make sure at least 1 flash and 1 capacity (flash or spinning)
+    If ($VsanHostDisks.Count -gt 1) {
+        $CacheDisks = @()
+        $CapacityDisks = @()
+
+		# Enumerate through each of the disks.
+		
+        Foreach ($VsanDisk in $VsanHostDisks) {
+            # If the device is tagged as SSD and is less than the max size, denote it as a cache device
+            If ($VsanDisk.IsSsd -eq $true -and $VsanDisk.CapacityGB -lt $CacheMax) {
+                    $CacheDisks +=$VsanDisk
+            } else {
+					# Add the disk to the CapacityDisks array
+                    $CapacityDisks +=$VsanDisk
+            }
+        }
+    }
+
+    $counter = [pscustomobject] @{ Value = 0 }
+
+    Switch ($CacheDisks.Count) {
+        "1" {
+            Write-Host "Creating 1 Disk Group because there is only 1 cache device on host"$VMHost
+            $groupSize = 7
+        }
+        "2" {
+            Write-Host "Creating 2 Disk Groups because there are 2 cache devices on host"$VMHost
+            $groupSize = [math]::floor($CapacityDisks.Count / 2) 
+        }
+        "3" {
+            Write-Host "Creating 3 Disk Groups because there are 3 cache devices on host"$VMHost
+            $groupSize = [math]::floor($CapacityDisks.Count / 3)             
+        }
+        "4" {
+            Write-Host "Creating 4 Disk Groups because there are 4 cache devices on host"$VMHost
+            $groupSize = [math]::floor($CapacityDisks.Count / 4) 
+        } 
+        "5" {
+            Write-Host "Creating 5 Disk Groups because there are 5 cache devices on host"$VMHost
+            $groupSize = [math]::floor($CapacityDisks.Count / 5)             
+        }
+    }
+
+        $DiskGroups = $CapacityDisks | Group-Object -Property { [math]::Floor($counter.Value++ / $groupSize) }
+
+        $i=0
+        Foreach ($CacheDisk in $CacheDisks) {
+
+			# Create a new Disk Group
+            New-VsanDiskGroup  -VMHost $VMHost -SsdCanonicalName $CacheDisk -DataDiskCanonicalName $DiskGroups[$i].Group
+            $i = $i+1
+            Write-Host "Adding Disk Group"$i
+        }
+
+}
+
 
 # Export Functions for 2 Node vSAN
 Export-ModuleMember -Function Get-Vsan2NodeForcedCache
@@ -1446,7 +1483,7 @@ Export-ModuleMember -Function Set-VsanWitnessVMkernel
 
 # Export Functions for vSAN Hosts
 Export-ModuleMember -Function Get-VsanHostVMkernelTrafficType
-Export-ModuleMember -Function Set-VsanHostWitnessTraffic
+Export-ModuleMember -Function Set-VsanHostWitnessTrafficType
 Export-ModuleMember -Function Get-VsanHostCapacity
 
 # Export Function for Stretched Clusters or 2 Node
