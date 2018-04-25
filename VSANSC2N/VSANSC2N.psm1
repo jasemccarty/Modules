@@ -110,9 +110,12 @@ Function New-VsanStretchedCluster {
 			# Create Fault Domains for 2 Node vSAN
 			$Cluster | Set-Cluster -VsanEnabled:$true -Confirm:$false -ErrorAction SilentlyContinue
 			$VsanHosts = $Cluster | Get-VMHost
+			
 			$PFD = Get-VsanFaultDomain -Name "Preferred" -ErrorAction SilentlyContinue
 			If (-Not $PFD) {$PFD = New-VsanFaultDomain -VMHost $VsanHosts[0] -Name "Preferred" -Confirm:$false}
-			$SFD = New-VsanFaultDomain -VMHost $VsanHosts[1] -Name "Secondary" -Confirm:$false
+
+			$SFD = Get-VsanFaultDomain -Name "Secondary" -ErrorAction SilentlyContinue
+			If (-Not $SFD) {$SFD = New-VsanFaultDomain -VMHost $VsanHosts[1] -Name "Secondary" -Confirm:$false}
 			
 			# Get the Witness Host
 			$WitnessHost = Get-VMHost -Name $Witness -ErrorAction Stop
@@ -1002,7 +1005,6 @@ Function Get-VsanWitnessVMkernel {
 
 	}
 }
-
 Function Set-VsanWitnessVMkernel {
 	<#
 	.SYNOPSIS
@@ -1485,6 +1487,7 @@ Export-ModuleMember -Function Set-VsanWitnessVMkernel
 Export-ModuleMember -Function Get-VsanHostVMkernelTrafficType
 Export-ModuleMember -Function Set-VsanHostWitnessTrafficType
 Export-ModuleMember -Function Get-VsanHostCapacity
+Export-ModuleMember -Function Add-VsanHostDiskGroup
 
 # Export Function for Stretched Clusters or 2 Node
 Export-ModuleMember -Function New-VsanStretchedCluster
