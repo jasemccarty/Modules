@@ -736,7 +736,7 @@ Function Set-VsanWitnessNetworkRoute {
 	Network Prefix
 
 	.EXAMPLE
-	PS C:\> Set-VsanWitnessNetworkRoute -Name <Witness FQDN> -Destination <192.168.110.0> -Gateway <192.168.109.253> -Prefix <24>
+	PS C:\> Set-VsanWitnessNetworkRoute -VMHost <Witness FQDN> -Destination <192.168.110.0> -Gateway <192.168.109.253> -Prefix <24>
 
 	.NOTES
 	Author                                    : Jase McCarty
@@ -750,17 +750,17 @@ Function Set-VsanWitnessNetworkRoute {
 
 	# Set our Parameters
 	[CmdletBinding()]Param(
-	[Parameter(Mandatory=$True)][string]$Name,
+	[Parameter(Mandatory=$True)][string]$VMHost,
 	[Parameter(Mandatory=$True)][String]$Destination,
 	[Parameter(Mandatory=$True)][String]$Gateway,
 	[Parameter(Mandatory=$True)][String]$Prefix
 	)
 
 	# Grab the host, so we can set Static Routes and NTP
-	$WitnessHost = Get-VMhost -Name $Name
+	$WitnessHost = Get-VMhost -Name $VMHost
 
 	# Set Static Routes
-	Write-Host "Setting Static Route for the Witness Host $Name"
+	Write-Host "Setting Static Route for the Host $Name"
 	New-VMHostRoute $WitnessHost -Destination $Destination -Gateway $Gateway -PrefixLength $Prefix -Confirm:$False
 
 }
@@ -774,7 +774,7 @@ Function Get-VsanWitnessNetworkRoute {
 	The ESXi hostname of the vSAN Witness Appliance
 
 	.EXAMPLE
-	PS C:\> Get-VsanWitnessNetworkRoute -Name <Witness FQDN>
+	PS C:\> Get-VsanWitnessNetworkRoute -VMHost <Witness FQDN>
 
 	.NOTES
 	Author                                    : Jase McCarty
@@ -789,14 +789,14 @@ Function Get-VsanWitnessNetworkRoute {
 
 	# Set our Parameters
 	[CmdletBinding()]Param(
-	[Parameter(Mandatory=$True)][string]$Name
+	[Parameter(Mandatory=$True)][string]$VMHost
 	)
 
 	# Grab the host, so we can set Static Routes and NTP
-	$WitnessHost = Get-VMhost -Name $Name
+	$WitnessHost = Get-VMhost -Name $VMHost
 
 	# Set Static Routes
-	Write-Host "Getting Static Routes for the Witness Host $Name"
+	Write-Host "Getting Static Routes for the Host $VMHost"
 	Get-VMHostRoute -VMHost $WitnessHost 
 }
 Function Remove-VsanWitnessNetworkRoute {
@@ -815,7 +815,7 @@ Function Remove-VsanWitnessNetworkRoute {
 	Network Prefix
 
 	.EXAMPLE
-	PS C:\> Remove-VsanWitnessNetworkRoute -Name <Witness FQDN> -Destination <192.168.110.0>
+	PS C:\> Remove-VsanWitnessNetworkRoute -VMHost <Witness FQDN> -Destination <192.168.110.0>
 
 	.NOTES
 	Author                                    : Jase McCarty
@@ -830,15 +830,15 @@ Function Remove-VsanWitnessNetworkRoute {
 
 	# Set our Parameters
 	[CmdletBinding()]Param(
-	[Parameter(Mandatory=$True)][string]$Name,
+	[Parameter(Mandatory=$True)][string]$VMHost,
 	[Parameter(Mandatory=$True)][String]$Destination
 	)
 
 	# Grab the host, so we can set Static Routes and NTP
-	$WitnessHost = Get-VMhost -Name $Name
+	$WitnessHost = Get-VMhost -Name $VMHost
 
 	# Set Static Routes
-	Write-Host "Removing Static Route for the Witness Host $Name"
+	Write-Host "Removing Static Route for the Host $VMHost"
 	$Routes = Get-VMHostRoute $WitnessHost | Where-Object {$_.Destination -contains $Destination}
 	Remove-VMHostRoute -VMHostRoute $Routes -Confirm:$false
 }
@@ -1142,7 +1142,7 @@ Function Set-VsanHostWitnessTrafficType {
 	Set or Unset
 
 	.EXAMPLE
-	PS C:\> Set-VsanHostWitnessTraffic -VMHost <VMHost> -Vmk <VMkernel> -Option <enable/remove>
+	PS C:\> Set-VsanHostWitnessTraffic -VMHost <VMHost> -Vmk <VMkernel> -Option <enable/disable>
 
 	.NOTES
 	Author                                    : Jase McCarty
@@ -1164,20 +1164,23 @@ Function Set-VsanHostWitnessTrafficType {
 	$VMHostEsxCli = Get-EsxCli -VMHost $VMHost -V2
 
 	Switch ($Option) {
-		"remove" {
+		"disable" {
 			# Remove the witness traffic type from the selected VMkernel
 			$WitnessArgs = $VMHostEsxCli.vsan.network.ip.add.CreateArgs()
 			$WitnessArgs.interfacename = $Vmk
 			Write-Host "Removing vSAN Witness Traffic from" $Vmk "on host" $ESXHost.Name 
 			$VMHostEsxCli.vsan.network.remove.invoke($WitnessArgs)
 		}
-		default {
+		"enable" {
 			# Set the VMKernel Interface desired for Witness Traffic
 			$WitnessArgs = $VMHostEsxCli.vsan.network.ip.add.CreateArgs()
 			$WitnessArgs.interfacename = $Vmk
 			$WitnessArgs.traffictype = "witness"
 			Write-Host "Adding vSAN Witness Traffic to " $Vmk "on host" $ESXHost.Name
 			$VMHostEsxCli.vsan.network.ip.add.Invoke($WitnessArgs)
+		} 
+		default {
+			Write-Host "Please enter enable or disable for the Option parameter"
 		}
 
 	}
@@ -1466,6 +1469,106 @@ Function Add-VsanHostDiskGroup {
 
 }
 
+Function New-InstantClone {
+<#
+    .NOTES
+    ===========================================================================
+     Created by:    William Lam
+     Date:          Apr 29, 2018
+     Organization:  VMware
+     Blog:          www.virtuallyghetto.com
+     Twitter:       @lamw
+    ===========================================================================
+    .SYNOPSIS
+        This function demonstrates the use of the new "Parentless" Instant Clone
+        API that was introduced in vSphere 6.7
+    .DESCRIPTION
+        Function to create new "Parentless" Instant Clones in vSphere 6.7
+    .EXAMPLE
+        $SourceVM = "Foo"
+        $newVMName = Foo-IC-1
+        $guestCustomizationValues = @{
+            "guestinfo.ic.hostname" = $newVMName
+            "guestinfo.ic.ipaddress" = "192.168.30.10"
+            "guestinfo.ic.netmask" = "255.255.255.0"
+            "guestinfo.ic.gateway" = "192.168.30.1"
+            "guestinfo.ic.dns" = "192.168.30.1"
+        }
+        New-InstantClone -SourceVM $SourceVM -DestinationVM $newVMName -CustomizationFields $guestCustomizationValues
+    .NOTES
+        Make sure that you have both a vSphere 6.7 env (VC/ESXi) as well as
+        as the latest PowerCLI 10.1 installed which is reuqired to use vSphere 6.7 APIs
+#>
+    param(
+        [Parameter(Mandatory=$true)][String]$SourceVM,
+        [Parameter(Mandatory=$true)][String]$DestinationVM,
+        [Parameter(Mandatory=$false)][Hashtable]$CustomizationFields
+    )
+	$vm = Get-VM -Name $SourceVM
+
+    $config = @()
+    $CustomizationFields.GetEnumerator() | Foreach-Object {
+        $optionValue = New-Object VMware.Vim.OptionValue
+        $optionValue.Key = $_.Key
+        $optionValue.Value = $_.Value
+        $config += $optionValue
+    }
+
+    # SourceVM must either be running or running but in Frozen State
+    if($vm.PowerState -ne "PoweredOn") {
+        Write-Host -ForegroundColor Red "Instant Cloning is only supported on a PoweredOn or Frozen VM"
+        break
+    }
+
+    # SourceVM == Powered On
+    if((Get-VM $SourceVM).ExtensionData.Runtime.InstantCloneFrozen -eq $false) {
+        Write-Host -ForegroundColor Red "Instant Cloning from a PoweredOn VM has not been implemented"
+        break
+    }
+
+    $spec = New-Object VMware.Vim.VirtualMachineInstantCloneSpec
+    $locationSpec = New-Object VMware.Vim.VirtualMachineRelocateSpec
+    $spec.Config = $config
+    $spec.Location = $locationSpec
+    $spec.Name = $DestinationVM
+
+    Write-Host "Creating Instant Clone $DestinationVM ..."
+    $task = $vm.ExtensionData.InstantClone_Task($spec)
+    $task1 = Get-Task -Id ("Task-$($task.value)")
+    #$task1 | Wait-Task | Out-Null
+}
+
+Function Copy-VsanWitnessCustomizationScript {
+	<#
+		.NOTES
+		===========================================================================
+		 Created by:    Jase McCarty
+		 Date:          May 13, 2008
+		 Organization:  VMware
+		 Blog:          www.jasemccarty.com
+		 Twitter:       @jasemccarty
+		===========================================================================
+		.SYNOPSIS
+			This function uploads a customization file for the vSAN Witness Appliance
+		.DESCRIPTION
+			This function uploads a customization file for the vSAN Witness Appliance
+		.EXAMPLE
+			Copy-VsanWitnessCustomizationScript -ScriptFile $ScriptFile -WitnessVM $WitnessVM -WitnessPassword $WitnessPassword
+		.NOTES
+			Make sure that you have both a vSphere 6.7 env (VC/ESXi) as well as
+			as the latest PowerCLI 10.1 installed which is reuqired to use vSphere 6.7 APIs
+	#>
+		param(
+			[Parameter(Mandatory=$true)][String]$Script,
+			[Parameter(Mandatory=$true)][String]$WitnessVM,
+			[Parameter(Mandatory=$true)][String]$WitnessFsPath,
+			[Parameter(Mandatory=$true)][String]$WitnessPassword
+		)
+		$VM = Get-VM -Name $WitnessVM
+	
+		Get-Item $Script | Copy-VMGuestFile -Destination $WitnessFsPath -VM $VM -LocalToGuest -GuestUser "root" -GuestPassword $WitnessPassword	
+}
+
 
 # Export Functions for 2 Node vSAN
 Export-ModuleMember -Function Get-Vsan2NodeForcedCache
@@ -1482,6 +1585,8 @@ Export-ModuleMember -Function Set-VsanWitnessNtp
 Export-ModuleMember -Function Add-VsanWitnessHost
 Export-ModuleMember -Function Get-VsanWitnessVMkernel
 Export-ModuleMember -Function Set-VsanWitnessVMkernel
+Export-ModuleMember -Function New-InstantClone
+Export-ModuleMember -Function Copy-VsanWitnessCustomizationScript
 
 # Export Functions for vSAN Hosts
 Export-ModuleMember -Function Get-VsanHostVMkernelTrafficType
