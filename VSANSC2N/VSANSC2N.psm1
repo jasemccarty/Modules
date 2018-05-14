@@ -1538,7 +1538,7 @@ Function New-InstantClone {
     #$task1 | Wait-Task | Out-Null
 }
 
-Function Copy-VsanWitnessCustomizationScript {
+Function Copy-EsxiVmCustomizationScript {
 	<#
 		.NOTES
 		===========================================================================
@@ -1553,16 +1553,17 @@ Function Copy-VsanWitnessCustomizationScript {
 		.DESCRIPTION
 			This function uploads a customization file for the vSAN Witness Appliance
 		.EXAMPLE
-			Copy-VsanWitnessCustomizationScript -ScriptFile $ScriptFile -WitnessVM $WitnessVM -WitnessPassword $WitnessPassword
+			Copy-EsxiVmCustomizationScript -Script $ScriptFile -VM $VMName -VMPassword $VMPassword -VMFsPath $VMFsPath 
 		.NOTES
 			Make sure that you have both a vSphere 6.7 env (VC/ESXi) as well as
 			as the latest PowerCLI 10.1 installed which is reuqired to use vSphere 6.7 APIs
 	#>
 		param(
 			[Parameter(Mandatory=$true)][String]$Script,
-			[Parameter(Mandatory=$true)][String]$WitnessVM,
-			[Parameter(Mandatory=$true)][String]$WitnessFsPath,
-			[Parameter(Mandatory=$true)][String]$WitnessPassword
+			[Parameter(Mandatory=$true)][String]$VMName,
+			[Parameter(Mandatory=$true)][String]$VMPassword,
+			[Parameter(Mandatory=$true)][String]$VMFsPath
+
 		)
 		$VM = Get-VM -Name $WitnessVM
 	
@@ -1586,7 +1587,7 @@ Export-ModuleMember -Function Add-VsanWitnessHost
 Export-ModuleMember -Function Get-VsanWitnessVMkernel
 Export-ModuleMember -Function Set-VsanWitnessVMkernel
 Export-ModuleMember -Function New-InstantClone
-Export-ModuleMember -Function Copy-VsanWitnessCustomizationScript
+Export-ModuleMember -Function Copy-EsxiVmCustomizationScript
 
 # Export Functions for vSAN Hosts
 Export-ModuleMember -Function Get-VsanHostVMkernelTrafficType
