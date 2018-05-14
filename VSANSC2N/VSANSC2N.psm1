@@ -1565,9 +1565,9 @@ Function Copy-EsxiVmCustomizationScript {
 			[Parameter(Mandatory=$true)][String]$VMFsPath
 
 		)
-		$VM = Get-VM -Name $WitnessVM
+		$VM = Get-VM -Name $VMName
 	
-		Get-Item $Script | Copy-VMGuestFile -Destination $WitnessFsPath -VM $VM -LocalToGuest -GuestUser "root" -GuestPassword $WitnessPassword	
+		Get-Item $Script | Copy-VMGuestFile -Destination $VMFsPath -VM $VM -LocalToGuest -GuestUser "root" -GuestPassword $VMPassword	
 }
 
 
