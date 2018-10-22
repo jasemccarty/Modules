@@ -64,7 +64,7 @@ Function New-VsanStretchedCluster {
 		Specifies the name of the new vSAN Witness Host want to use.
 
 	.EXAMPLE
-		PS C:\> New-VsanStretchedClusterWitness -ClusterName <Cluster Name> -Witness <Witness>
+		PS C:\> New-VsanStretchedCluster -ClusterName <Cluster Name> -Witness <Witness>
 
 	.NOTES
 		Author                                    : Jase McCarty
@@ -292,6 +292,74 @@ Function Set-VsanStretchedClusterWitness {
 			}
 					
 	}
+}
+Function New-VsanStretchedClusterWitness {
+	<#
+	.SYNOPSIS
+	This function will deploy a Witness for a 2 Node or Stretched vSAN Cluster
+	.DESCRIPTION
+	This function will deploy a Witness for a 2 Node or Stretched vSAN Cluster
+
+	.PARAMETER Cluster
+	Specifies the name of the Cluster you want to set the vSAN Witness Host for.
+	.PARAMETER Datastore
+	Specifies the name of the datastore to use.
+	.PARAMETER OVAPath
+	Full path and OVA filename for the vSAN Witness Appliance
+	.PARAMETER Name
+	The Virtual Machine Name of the vSAN Witness Appliance
+	.PARAMETER Pass
+	The root password of the vSAN Witness Appliance
+	.PARAMETER Size
+	The deployment size of the vSAN Witness Appliance
+	.PARAMETER PG1
+	The port group name for the vSAN Witness Appliance management network 
+	.PARAMETER PG2
+	The port group name for the vSAN Witness Appliance WitnessPg network
+
+	.EXAMPLE
+	PS C:\> New-VsanStretchedClusterWitness -Cluster <Cluster Name> -Datastrre <Datastore name> -OVAPath <c:\path\witness-xxx.ova> -Name <Witness VM Name> -Pass <password for witness> -Size <tiny/normal/large> -PG1 <port group name for Management network> -PG2 <port group name for Witness Network>
+
+	.NOTES
+	Author                                    : Jase McCarty
+	Version                                   : 0.1
+	==========Tested Against Environment==========
+	VMware vSphere Hypervisor(ESXi) Version   : 6.5
+	VMware vCenter Server Version             : 6.5
+	PowerCLI Version                          : PowerCLI 6.5.4
+	PowerShell Version                        : 3.0
+	#>
+
+	# Set our Parameters
+	[CmdletBinding()]Param(
+	[Parameter(Mandatory=$true)][String]$Cluster,
+	[Parameter(Mandatory=$true)][String]$Datastore,
+	[Parameter(Mandatory=$true)][String]$OVAPath,
+	[Parameter(Mandatory=$true)][String]$Name,
+	[Parameter(Mandatory=$true)][String]$Pass,
+	[Parameter(Mandatory=$true)][String]$Size,
+	[Parameter(Mandatory=$true)][String]$PG1,
+	[Parameter(Mandatory=$true)][String]$PG2
+	)
+
+	# Grab a random host in the cluster to deploy to
+	$TargetHost = Get-Cluster $Cluster | Get-VMHost | Where-Object {$_.PowerState -eq "PoweredOn" -and $_.ConnectionState -eq "Connected"} |Get-Random
+
+	# Grab a random datastore
+	$TargetDatastore = Get-Datastore -Name $Datastore
+
+	# Grab the OVA properties from the vSAN Witness Appliance OVA
+	$ovfConfig = Get-OvfConfiguration -Ovf $OVAPath
+
+	# Set the Network Port Groups to use, the deployment size, and the root password for the vSAN Witness Appliance
+	$ovfconfig.NetworkMapping.Management_Network.Value = $PG1
+	$ovfconfig.NetworkMapping.Witness_Network.Value = $PG2
+	$ovfconfig.DeploymentOption.Value = $Size
+	$ovfconfig.vsan.witness.root.passwd.value = $Pass
+
+	# Import the vSAN Witness Appliance 
+	Import-VApp -Source $OVAPath -OvfConfiguration $ovfConfig -Name $Name -VMHost $TargetHost -Datastore $TargetDatastore -DiskStorageFormat Thin
+
 }
 Function Set-Vsan2NodeForcedCache {
 	<#
@@ -548,74 +616,7 @@ Function Set-VsanStretchedClusterDrsRules {
 	}
 
 }
-Function New-VsanStretchedClusterWitness {
-		<#
-		.SYNOPSIS
-		This function will deploy a Witness for a 2 Node or Stretched vSAN Cluster
-		.DESCRIPTION
-		This function will deploy a Witness for a 2 Node or Stretched vSAN Cluster
 
-		.PARAMETER Cluster
-		Specifies the name of the Cluster you want to set the vSAN Witness Host for.
-		.PARAMETER Datastore
-		Specifies the name of the datastore to use.
-		.PARAMETER OVAPath
-		Full path and OVA filename for the vSAN Witness Appliance
-		.PARAMETER Name
-		The Virtual Machine Name of the vSAN Witness Appliance
-		.PARAMETER Pass
-		The root password of the vSAN Witness Appliance
-		.PARAMETER Size
-		The deployment size of the vSAN Witness Appliance
-		.PARAMETER PG1
-		The port group name for the vSAN Witness Appliance management network 
-		.PARAMETER PG2
-		The port group name for the vSAN Witness Appliance WitnessPg network
-
-		.EXAMPLE
-		PS C:\> New-VsanStretchedClusterWitness -Cluster <Cluster Name> -Datastrre <Datastore name> -OVAPath <c:\path\witness-xxx.ova> -Name <Witness VM Name> -Pass <password for witness> -Size <tiny/normal/large> -PG1 <port group name for Management network> -PG2 <port group name for Witness Network>
-
-		.NOTES
-		Author                                    : Jase McCarty
-		Version                                   : 0.1
-		==========Tested Against Environment==========
-		VMware vSphere Hypervisor(ESXi) Version   : 6.5
-		VMware vCenter Server Version             : 6.5
-		PowerCLI Version                          : PowerCLI 6.5.4
-		PowerShell Version                        : 3.0
-		#>
-
-		# Set our Parameters
-		[CmdletBinding()]Param(
-		[Parameter(Mandatory=$true)][String]$Cluster,
-		[Parameter(Mandatory=$true)][String]$Datastore,
-		[Parameter(Mandatory=$true)][String]$OVAPath,
-		[Parameter(Mandatory=$true)][String]$Name,
-		[Parameter(Mandatory=$true)][String]$Pass,
-		[Parameter(Mandatory=$true)][String]$Size,
-		[Parameter(Mandatory=$true)][String]$PG1,
-		[Parameter(Mandatory=$true)][String]$PG2
-		)
-
-		# Grab a random host in the cluster to deploy to
-		$TargetHost = Get-Cluster $Cluster | Get-VMHost | Where-Object {$_.PowerState -eq "PoweredOn" -and $_.ConnectionState -eq "Connected"} |Get-Random
-
-		# Grab a random datastore
-		$TargetDatastore = Get-Datastore -Name $Datastore
-
-		# Grab the OVA properties from the vSAN Witness Appliance OVA
-		$ovfConfig = Get-OvfConfiguration -Ovf $OVAPath
-
-		# Set the Network Port Groups to use, the deployment size, and the root password for the vSAN Witness Appliance
-		$ovfconfig.NetworkMapping.Management_Network.Value = $PG1
-		$ovfconfig.NetworkMapping.Witness_Network.Value = $PG2
-		$ovfconfig.DeploymentOption.Value = $Size
-		$ovfconfig.vsan.witness.root.passwd.value = $Pass
-
-		# Import the vSAN Witness Appliance 
-		Import-VApp -Source $OVAPath -OvfConfiguration $ovfConfig -Name $Name -VMHost $TargetHost -Datastore $TargetDatastore -DiskStorageFormat Thin
-
-}
 Function Set-VsanWitnessNetwork {
 
 		<#
@@ -1468,7 +1469,6 @@ Function Add-VsanHostDiskGroup {
         }
 
 }
-
 Function New-InstantClone {
 <#
     .NOTES
@@ -1537,7 +1537,6 @@ Function New-InstantClone {
     $task1 = Get-Task -Id ("Task-$($task.value)")
     #$task1 | Wait-Task | Out-Null
 }
-
 Function Copy-EsxiVmCustomizationScript {
 	<#
 		.NOTES
