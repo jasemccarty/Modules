@@ -56,43 +56,6 @@ Function Set-VsanEncryption {
    # Get the Cluster 
    $VsanCluster = Get-Cluster -Name $Cluster
 
-   # Get the list of KMS Servers that are included 
-   $KmsClusterList = Get-KmsCluster
-
-   # Was a KMS Cluster Specified? 
-   #     Specified: Is it in the list?
-   #                Is it not in the list?
-   # Not Specified: Present a list 
-
-   If ($KmsCluster) {
-      If ($KmsClusterList.Name.Contains($KmsCluster)) {
-         Write-Host "$KmsCluster In the list, proceeding" -ForegroundColor Green
-         $KmsClusterProfile = $KmsClusterList | Where-Object {$_.Name -eq $KmsCluster}
-      } else {
-            
-         $Count = 0
-         Foreach ($KmsClusterItem in $KmsClusterList) {
-            Write-Host "$Count) $KmsClusterItem "
-            $Count = $Count + 1
-         }
-         
-         $KmsClusterEntry = Read-Host -Prompt "$KmsCluster is not valid, please select one of the existing KMS Clusters to use" 
-         Write-Host $KmsClusterList[$KmsClusterEntry]
-         $KmsClusterProfile = $KmsClusterList[$KmsClusterEntry]
-        }
-   } else {
-            
-      $Count = 0
-      Foreach ($KmsClusterItem in $KmsClusterList) {
-         Write-Host "$Count) $KmsClusterItem "
-         $Count = $Count + 1
-      }
-      
-      $KmsClusterEntry = Read-Host -Prompt "No KMS provided, please select one of the existing KMS Clusters to use" 
-      Write-Host $KmsClusterList[$KmsClusterEntry]
-      $KmsClusterProfile = $KmsClusterList[$KmsClusterEntry]
-   }
-
    # Get the vSAN Cluster Configuration View
    $VsanVcClusterConfig = Get-VsanView -Id "VsanVcClusterConfigSystem-vsan-cluster-config-system"
 
@@ -109,7 +72,44 @@ Function Set-VsanEncryption {
 
    # If vSAN is enabled and it is Encrypted
    If($VsanCluster.vSanEnabled){
-   
+
+      # Get the list of KMS Servers that are included 
+      $KmsClusterList = Get-KmsCluster
+
+      # Was a KMS Cluster Specified? 
+      #     Specified: Is it in the list?
+      #                Is it not in the list?
+      # Not Specified: Present a list 
+
+      If ($KmsCluster) {
+         If ($KmsClusterList.Name.Contains($KmsCluster)) {
+            Write-Host "$KmsCluster In the list, proceeding" -ForegroundColor Green
+            $KmsClusterProfile = $KmsClusterList | Where-Object {$_.Name -eq $KmsCluster}
+         } else {
+               
+            $Count = 0
+            Foreach ($KmsClusterItem in $KmsClusterList) {
+               Write-Host "$Count) $KmsClusterItem "
+               $Count = $Count + 1
+            }
+            
+            $KmsClusterEntry = Read-Host -Prompt "$KmsCluster is not valid, please select one of the existing KMS Clusters to use" 
+            Write-Host $KmsClusterList[$KmsClusterEntry]
+            $KmsClusterProfile = $KmsClusterList[$KmsClusterEntry]
+         }
+      } else {
+               
+         $Count = 0
+         Foreach ($KmsClusterItem in $KmsClusterList) {
+            Write-Host "$Count) $KmsClusterItem "
+            $Count = $Count + 1
+         }
+         
+         $KmsClusterEntry = Read-Host -Prompt "No KMS provided, please select one of the existing KMS Clusters to use" 
+         Write-Host $KmsClusterList[$KmsClusterEntry]
+         $KmsClusterProfile = $KmsClusterList[$KmsClusterEntry]
+      }
+
       Switch ($Enabled) {
          # Disabling vSAN Encryption if it is enabled
          $false {
