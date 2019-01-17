@@ -275,9 +275,19 @@ Function Set-VsanStretchedClusterWitness {
 					Write-Host "Removing Witness $CWH from the vSAN cluster" -foregroundcolor black -backgroundcolor white
 					Set-VsanClusterConfiguration -Configuration $Cluster -StretchedClusterEnabled $false 
 
+					# Let's hang around while we wait for the Disk Group to be created on the Witness
 					# Set the cluster configuration to Stretched/2 Node, with the new witness and the previously preferred fault domain
 					Write-Host "Adding Witness $NewWitness and reenabling the $SCTYPE Cluster" -foregroundcolor black -backgroundcolor white
 					Set-VsanClusterConfiguration -Configuration $Cluster -StretchedClusterEnabled $True -PreferredFaultDomain $PFD -WitnessHost $NewWitness -WitnessHostCacheDisk mpx.vmhba1:C0:T2:L0 -WitnessHostCapacityDisk mpx.vmhba1:C0:T1:L0
+
+					# Fix all obects operation
+					# Load the vSAN vC Cluster Health System View
+					$VVCHS = Get-VsanView -Id "VsanVcClusterHealthSystem-vsan-cluster-health-system"
+
+					# Invoke the Fix for all objects
+					Write-Host "Issuing a 'Repair All Objects' command"
+					$RepairTask = $VVCHS.VsanHealthRepairClusterObjectsImmediate($Cluster.ExtensionData.MoRef,$null) 
+
 
 				} else {
 					# Don't let an admin remove the existing witness and re-add it
@@ -1290,7 +1300,7 @@ Function Set-VsanStretchedClusterPreferredFaultDomain {
 	# Set our Parameters
 	[CmdletBinding()]Param(
 	[Parameter(Mandatory=$True)][string]$ClusterName,
-	[Parameter(Mandatory = $false)][String]$PreferredFaultDomain,
+	[Parameter(Mandatory = $false)][Stringer]$PreferredFaultDomain,
 	[Parameter(Mandatory = $false)][String]$Alternate
 	)
 
@@ -1423,7 +1433,7 @@ Function Add-VsanHostDiskGroup {
 		
         Foreach ($VsanDisk in $VsanHostDisks) {
             # If the device is tagged as SSD and is less than the max size, denote it as a cache device
-            If ($VsanDisk.IsSsd -eq $true -and $VsanDisk.CapacityGB -lt $CacheMax) {
+            If ($VsanDisk.IsSsd -eq $true -and $VsanDisk.CapacityGB -lt "51") {
                     $CacheDisks +=$VsanDisk
             } else {
 					# Add the disk to the CapacityDisks array
@@ -1432,31 +1442,31 @@ Function Add-VsanHostDiskGroup {
         }
     }
 
-    $counter = [pscustomobject] @{ Value = 0 }
+    #$counter = [pscustomobject] @{ Value = 0 }
+	$counter = 0
 
     Switch ($CacheDisks.Count) {
         "1" {
             Write-Host "Creating 1 Disk Group because there is only 1 cache device on host"$VMHost
             $groupSize = 7
         }
-        "2" {
-            Write-Host "Creating 2 Disk Groups because there are 2 cache devices on host"$VMHost
-            $groupSize = [math]::floor($CapacityDisks.Count / 2) 
+        {($_ -gt 1) -and ($_ -lt 6)} {
+            Write-Host "Creating 2 Disk Groups because there are "$CacheDisks.Count" cache devices on host"$VMHost
+            $groupSize = [math]::floor($CapacityDisks.Count / $CacheDisks.Count) 
         }
-        "3" {
-            Write-Host "Creating 3 Disk Groups because there are 3 cache devices on host"$VMHost
-            $groupSize = [math]::floor($CapacityDisks.Count / 3)             
-        }
-        "4" {
-            Write-Host "Creating 4 Disk Groups because there are 4 cache devices on host"$VMHost
-            $groupSize = [math]::floor($CapacityDisks.Count / 4) 
-        } 
-        "5" {
-            Write-Host "Creating 5 Disk Groups because there are 5 cache devices on host"$VMHost
-            $groupSize = [math]::floor($CapacityDisks.Count / 5)             
-        }
+        #"3" {
+        #    Write-Host "Creating 3 Disk Groups because there are 3 cache devices on host"$VMHost
+        #    $groupSize = [math]::floor($CapacityDisks.Count / 3)             
+        #}
+        #"4" {
+        #    Write-Host "Creating 4 Disk Groups because there are 4 cache devices on host"$VMHost
+        #    $groupSize = [math]::floor($CapacityDisks.Count / 4) 
+        #} 
+        #"5" {
+        #    Write-Host "Creating 5 Disk Groups because there are 5 cache devices on host"$VMHost
+        #    $groupSize = [math]::floor($CapacityDisks.Count / 5)             
+        #}
     }
-
         $DiskGroups = $CapacityDisks | Group-Object -Property { [math]::Floor($counter.Value++ / $groupSize) }
 
         $i=0
