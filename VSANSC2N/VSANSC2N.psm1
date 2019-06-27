@@ -1450,22 +1450,22 @@ Function Add-VsanHostDiskGroup {
             Write-Host "Creating 1 Disk Group because there is only 1 cache device on host"$VMHost
             $groupSize = 7
         }
-        {($_ -gt 1) -and ($_ -lt 6)} {
+        "2" {($_ -gt 1) -and ($_ -lt 6)} {
             Write-Host "Creating 2 Disk Groups because there are "$CacheDisks.Count" cache devices on host"$VMHost
             $groupSize = [math]::floor($CapacityDisks.Count / $CacheDisks.Count) 
         }
-        #"3" {
-        #    Write-Host "Creating 3 Disk Groups because there are 3 cache devices on host"$VMHost
-        #    $groupSize = [math]::floor($CapacityDisks.Count / 3)             
-        #}
-        #"4" {
-        #    Write-Host "Creating 4 Disk Groups because there are 4 cache devices on host"$VMHost
-        #    $groupSize = [math]::floor($CapacityDisks.Count / 4) 
-        #} 
-        #"5" {
-        #    Write-Host "Creating 5 Disk Groups because there are 5 cache devices on host"$VMHost
-        #    $groupSize = [math]::floor($CapacityDisks.Count / 5)             
-        #}
+        "3" {
+            Write-Host "Creating 3 Disk Groups because there are 3 cache devices on host"$VMHost
+            $groupSize = [math]::floor($CapacityDisks.Count / 3)             
+        }
+        "4" {
+            Write-Host "Creating 4 Disk Groups because there are 4 cache devices on host"$VMHost
+            $groupSize = [math]::floor($CapacityDisks.Count / 4) 
+        } 
+        "5" {
+            Write-Host "Creating 5 Disk Groups because there are 5 cache devices on host"$VMHost
+            $groupSize = [math]::floor($CapacityDisks.Count / 5)             
+        }
     }
         $DiskGroups = $CapacityDisks | Group-Object -Property { [math]::Floor($counter.Value++ / $groupSize) }
 
